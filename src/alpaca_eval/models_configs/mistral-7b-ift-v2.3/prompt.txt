@@ -1,1 +1,5 @@
-<|system|>\n</s>\n<|user|>\n{instruction}</s>\n<|assistant|>
+<|system|>
+</s>
+<|user|>
+{instruction}</s>
+<|assistant|>
