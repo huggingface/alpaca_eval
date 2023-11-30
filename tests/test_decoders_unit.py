@@ -2,9 +2,7 @@
 import math
 from types import SimpleNamespace
 
-import anthropic.resources
 import pytest
-from openai.openai_object import OpenAIObject
 
 from alpaca_eval.decoders.anthropic import anthropic_completions
 from alpaca_eval.decoders.cohere import cohere_completions
@@ -17,7 +15,7 @@ MOCKED_COMPLETION = "Mocked completion text"
 @pytest.fixture
 def mock_openai_completion():
     # Create a mock Completion object
-    completion_mock = OpenAIObject()
+    completion_mock = dict()
     completion_mock["total_tokens"] = 3
     completion_mock["text"] = MOCKED_COMPLETION
     return completion_mock
@@ -50,7 +48,7 @@ def test_anthropic_completions(mocker):
 def test_cohere_completions(mocker):
     mocker.patch(
         "alpaca_eval.decoders.cohere._cohere_completion_helper",
-        return_value=["Mocked completion text",42],
+        return_value=["Mocked completion text", 42],
     )
     result = cohere_completions(["Prompt 1", "Prompt 2"], num_procs=1)
     _run_all_asserts_completions(result)

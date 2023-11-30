@@ -82,5 +82,15 @@ def get_fn_completions(name: Union[str, Callable]) -> Callable:
             logging.exception(f"You need {packages} to use vllm_completions. Error:")
             raise e
 
+    elif name == "bedrock_anthropic_completions":
+        try:
+            from .bedrock_anthropic import bedrock_anthropic_completions
+
+            return bedrock_anthropic_completions
+        except ImportError as e:
+            packages = ["boto3"]
+            logging.exception(f"You need {packages} to use bedrock_anthropic. Error:")
+            raise e
+
     else:
         raise ValueError(f"Unknown decoder: {name}")

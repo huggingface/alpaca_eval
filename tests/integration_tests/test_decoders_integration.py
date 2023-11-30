@@ -4,6 +4,7 @@ import pytest
 
 from alpaca_eval import constants, utils
 from alpaca_eval.decoders.anthropic import anthropic_completions
+from alpaca_eval.decoders.bedrock_anthropic import bedrock_anthropic_completions
 from alpaca_eval.decoders.cohere import cohere_completions
 from alpaca_eval.decoders.huggingface_api import huggingface_api_completions
 from alpaca_eval.decoders.huggingface_local import huggingface_local_completions
@@ -72,3 +73,12 @@ def test_vllm_local_completions_integration():
         prompts, model_name="OpenBuddy/openbuddy-openllama-3b-v10-bf16", max_new_tokens=100
     )
     assert len(results["completions"]) == len(prompts)
+
+
+@pytest.mark.slow
+def test_bedrock_anthropic_completions_integration():
+    prompts = _get_formatted_prompts("claude")
+    results = bedrock_anthropic_completions(prompts)
+    assert len(results["completions"]) == len(prompts)
+    assert "2" in results["completions"][0]
+    assert "4" in results["completions"][1]
