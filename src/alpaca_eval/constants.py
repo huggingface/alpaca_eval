@@ -1,20 +1,33 @@
+import ast
 import getpass
 import os
+from functools import partial
 from pathlib import Path
 
 import datasets
+from huggingface_hub import hf_hub_download
+
+CURRENT_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).parents[2]
 
 ### API specific ###
+API_MAX_CONCURRENCY = int(os.environ.get("API_MAX_CONCURRENCY", 5))
+
+OPENAI_MAX_CONCURRENCY = int(os.environ.get("OPENAI_MAX_CONCURRENCY", 5))
+OPENAI_CLIENT_CONFIG_PATH = os.environ.get("OPENAI_CLIENT_CONFIG_PATH", BASE_DIR / "client_configs/openai_configs.yaml")
+# the following is for backward compatibility, the recommended way is to use OPENAI_CLIENT_CONFIG_PATH
 OPENAI_API_KEYS = os.environ.get("OPENAI_API_KEYS", os.environ.get("OPENAI_API_KEY", None))
 if isinstance(OPENAI_API_KEYS, str):
     OPENAI_API_KEYS = OPENAI_API_KEYS.split(",")
 OPENAI_ORGANIZATION_IDS = os.environ.get("OPENAI_ORGANIZATION_IDS", None)
 if isinstance(OPENAI_ORGANIZATION_IDS, str):
     OPENAI_ORGANIZATION_IDS = OPENAI_ORGANIZATION_IDS.split(",")
-OPENAI_MAX_CONCURRENCY = int(os.environ.get("OPENAI_MAX_CONCURRENCY", 5))
+#
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", None)
-ANTHROPIC_MAX_CONCURRENCY = int(os.environ.get("ANTHROPIC_MAX_CONCURRENCY", 1))
+ANTHROPIC_MAX_CONCURRENCY = int(os.environ.get("ANTHROPIC_MAX_CONCURRENCY", API_MAX_CONCURRENCY))
+
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", None)
 
 COHERE_API_KEY = os.environ.get("COHERE_API_KEY", None)
 
@@ -23,14 +36,18 @@ HUGGINGFACEHUB_API_TOKEN = os.environ.get("HUGGINGFACEHUB_API_TOKEN", None)
 DATASETS_FORCE_DOWNLOAD = os.environ.get("DATASETS_FORCE_DOWNLOAD", False)
 ########################
 
+IS_ALPACA_EVAL_2 = ast.literal_eval(os.environ.get("IS_ALPACA_EVAL_2", "True"))
+ANNOTATOR_CONFIG_AE1 = "alpaca_eval_gpt4"
+ANNOTATOR_CONFIG_AE2 = "weighted_alpaca_eval_gpt4_turbo"
+DEFAULT_ANNOTATOR_CONFIG = ANNOTATOR_CONFIG_AE2 if IS_ALPACA_EVAL_2 else ANNOTATOR_CONFIG_AE1
 DEFAULT_CACHE_DIR = None
-CURRENT_DIR = Path(__file__).parent
 EVALUATORS_CONFIG_DIR = CURRENT_DIR / "evaluators_configs"
 MODELS_CONFIG_DIR = CURRENT_DIR / "models_configs"
-BASE_DIR = Path(__file__).parents[2]
+
 
 MINIMAL_EVALUATORS = (
-    "alpaca_eval_gpt4",
+    ANNOTATOR_CONFIG_AE2,
+    ANNOTATOR_CONFIG_AE1,
     "aviary_gpt4",
     "gpt4",
     "claude",
@@ -57,13 +74,13 @@ VERIFIED_EVALUATORS = tuple(
 )
 
 # order matters i => i+1 when filtering
-ORDERED_LEADERBOARD_MODES = ["minimal", "verified", "community"]
+ORDERED_LEADERBOARD_MODES = ["minimal", "verified", "community", "dev"]
 
 
-def ALPACAEVAL_REFERENCE_OUTPUTS():
+def get_alpaca_eval_data(dataset="alpaca_eval_gpt4_baseline"):
     dataset = datasets.load_dataset(
         "tatsu-lab/alpaca_eval",
-        "alpaca_eval",
+        dataset,
         cache_dir=DEFAULT_CACHE_DIR,
         token=DATASETS_TOKEN,
         download_mode="force_redownload" if DATASETS_FORCE_DOWNLOAD else None,
@@ -71,14 +88,23 @@ def ALPACAEVAL_REFERENCE_OUTPUTS():
     return dataset
 
 
-def ALPACAFARM_ALL_OUTPUTS():
-    return datasets.load_dataset(
-        "tatsu-lab/alpaca_eval",
-        "alpaca_eval_all_outputs",
+ALPACAEVAL_REFERENCE_OUTPUTS_2 = get_alpaca_eval_data
+ALPACAEVAL_REFERENCE_OUTPUTS_1 = partial(get_alpaca_eval_data, dataset="alpaca_eval")
+
+ALPACAEVAL_REFERENCE_OUTPUTS = ALPACAEVAL_REFERENCE_OUTPUTS_2 if IS_ALPACA_EVAL_2 else ALPACAEVAL_REFERENCE_OUTPUTS_1
+
+
+def ALPACAEVAL_INSTRUCTION_PARAMETERS():
+    out = hf_hub_download(
+        repo_id="tatsu-lab/alpaca_eval",
+        filename="instruction_difficulty.csv",
+        repo_type="dataset",
+        force_download=DATASETS_FORCE_DOWNLOAD,
         cache_dir=DEFAULT_CACHE_DIR,
         token=DATASETS_TOKEN,
-        download_mode="force_redownload" if DATASETS_FORCE_DOWNLOAD else None,
-    )["eval"]
+    )
+    pd.read_csv(out, index_col=0).squeeze()
+    return df
 
 
 def ALPACAFARM_GOLD_CROSSANNOTATIONS():
@@ -111,12 +137,22 @@ def ALPACAFARM_GOLD_ANNOTATIONS():
     return df
 
 
-ALPACAEVAL_LEADERBOARD_PATHS = CURRENT_DIR / "leaderboards/data_AlpacaEval"
+ALPACAEVAL_2_LEADERBOARD_PATHS = CURRENT_DIR / f"leaderboards/data_AlpacaEval_2"
+ALPACAEVAL_1_LEADERBOARD_PATHS = CURRENT_DIR / f"leaderboards/data_AlpacaEval"
+ALPACAEVAL_LEADERBOARD_PATHS = ALPACAEVAL_2_LEADERBOARD_PATHS if IS_ALPACA_EVAL_2 else ALPACAEVAL_1_LEADERBOARD_PATHS
+
+
 PRECOMPUTED_LEADERBOARDS = {
-    (str(ALPACAEVAL_REFERENCE_OUTPUTS), "claude"): ALPACAEVAL_LEADERBOARD_PATHS / "claude_leaderboard.csv",
-    (str(ALPACAEVAL_REFERENCE_OUTPUTS), "alpaca_eval_gpt4"): ALPACAEVAL_LEADERBOARD_PATHS
-    / "alpaca_eval_gpt4_leaderboard.csv",
-    (str(ALPACAEVAL_REFERENCE_OUTPUTS), "chatgpt_fn"): ALPACAEVAL_LEADERBOARD_PATHS / "chatgpt_fn_leaderboard.csv",
+    (str(ALPACAEVAL_REFERENCE_OUTPUTS_1), "claude"): ALPACAEVAL_1_LEADERBOARD_PATHS / "claude_leaderboard.csv",
+    (str(ALPACAEVAL_REFERENCE_OUTPUTS_1), ANNOTATOR_CONFIG_AE1): ALPACAEVAL_1_LEADERBOARD_PATHS
+    / f"{ANNOTATOR_CONFIG_AE1}_leaderboard.csv",
+    (str(ALPACAEVAL_REFERENCE_OUTPUTS_1), "chatgpt_fn"): ALPACAEVAL_1_LEADERBOARD_PATHS / "chatgpt_fn_leaderboard.csv",
+    (str(ALPACAEVAL_REFERENCE_OUTPUTS_2), ANNOTATOR_CONFIG_AE2): ALPACAEVAL_2_LEADERBOARD_PATHS
+    / f"{ANNOTATOR_CONFIG_AE2}_leaderboard.csv",
+    (str(ALPACAEVAL_REFERENCE_OUTPUTS_2), "weighted_alpaca_eval_gpt4_turbo"): ALPACAEVAL_2_LEADERBOARD_PATHS
+    / f"weighted_alpaca_eval_gpt4_turbo_leaderboard.csv",
+    # (str(ALPACAEVAL_REFERENCE_OUTPUTS_2), "alpaca_eval_cot_gpt4_turbo_fn"): ALPACAEVAL_2_LEADERBOARD_PATHS
+    # / f"alpaca_eval_cot_gpt4_turbo_fn_leaderboard.csv",
 }
 
 HUMAN_ANNOTATED_MODELS_TO_KEEP = (
@@ -138,17 +174,88 @@ HUMAN_ANNOTATED_MODELS_TO_KEEP = (
 )
 
 EVALUATORS_LEADERBOARD_COLS_TO_PRIORITIZE = [
-    "Human agreement [%]",
+    "Human agreement",
     "Price [$/1000 examples]",
     "Time [seconds/1000 examples]",
+    "Spearman corr.",
+    "Pearson corr.",
     "Bias",
     "Variance",
     "Proba. prefer longer",
     "Proba. prefer lists",
     "Proba. prefer 1",
 ]
-EVALUATORS_LEADERBOARD_COLS_TO_PRINT = EVALUATORS_LEADERBOARD_COLS_TO_PRIORITIZE[:6]
+
+MINIMAL_MODELS_FOR_NEW_LEADERBOARD = [
+    "gpt4_turbo",
+    "gpt4",
+    "tulu-2-dpo-70b",
+    "Yi-34B-Chat",
+    "llama-2-70b-chat-hf",
+    "claude-2.1",
+    "cohere",
+    "chatgpt",
+    "gemini-pro",
+    "Mixtral-8x7B-Instruct-v0.1",
+    "Mistral-7B-Instruct-v0.2",
+    "vicuna-33b-v1.3",
+    "alpaca-7b",
+]
+
+# Feb 2, 2024
+# maps models to Arena Elo rating
+CHATBOT_ARENA_LEADERBOARD = {
+    "gpt4_1106_preview": 1252,
+    "gpt4_0314": 1190,
+    "gpt4_0613": 1162,
+    "mistral-medium": 1150,
+    "claude": 1149,
+    "claude-2": 1132,
+    "claude-2.1": 1119,
+    "Mixtral-8x7B-Instruct-v0.1": 1118,
+    "gpt-3.5-turbo-0613": 1118,
+    "Yi-34B-Chat": 1115,
+    "gemini-pro": 1114,
+    "claude-instant-1.2": 1109,
+    "gpt-3.5-turbo-0301": 1105,
+    "wizardlm-70b": 1105,
+    "tulu-2-dpo-70b": 1104,
+    "vicuna-33b-v1.3": 1093,
+    "Starling-LM-7B-alpha": 1090,
+    "deepseek-llm-67b-chat": 1082,
+    "llama-2-70b-chat-hf": 1082,
+    "OpenHermes-2.5-Mistral-7B": 1078,
+    "gpt-3.5-turbo-1106": 1071,
+    "dolphin-2.2.1-mistral-7b": 1065,
+    "wizardlm-13b-v1.2": 1058,
+    "zephyr-7b-beta": 1051,
+    "llama-2-13b-chat-hf": 1042,
+    "vicuna-13b-v1.5": 1040,
+    "zephyr-7b-alpha": 1037,
+    "Qwen-14B-Chat": 1034,
+    "guanaco-33b": 1032,
+    "llama-2-7b-chat-hf": 1024,
+    "vicuna-7b-v1.5": 1005,
+    # older models
+    "chatglm2-6b": 930,
+    "oasst-sft-pythia-12b": 897,
+}
+
+EVALUATORS_LEADERBOARD_COLS_TO_PRINT = EVALUATORS_LEADERBOARD_COLS_TO_PRIORITIZE[:8]
 
 CURRENT_USER = getpass.getuser()
 if CURRENT_USER in ["yanndubs"]:
     DEFAULT_CACHE_DIR = "/juice5/scr5/nlp/crfm/human-feedback/cache"
+
+
+def ALPACAFARM_ALL_OUTPUTS():
+    if IS_ALPACA_EVAL_2:
+        return [f"results/{m}/model_outputs.json" for m in MINIMAL_MODELS_FOR_NEW_LEADERBOARD]
+    else:
+        return datasets.load_dataset(
+            "tatsu-lab/alpaca_eval",
+            "alpaca_eval_all_outputs",
+            cache_dir=DEFAULT_CACHE_DIR,
+            token=DATASETS_TOKEN,
+            download_mode="force_redownload" if DATASETS_FORCE_DOWNLOAD else None,
+        )["eval"]

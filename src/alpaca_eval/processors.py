@@ -6,6 +6,7 @@ Note: not worth to make the changes but all the parsers could have been processo
 """
 
 import abc
+import json
 from typing import Optional, Sequence
 
 import numpy as np
@@ -13,14 +14,30 @@ import pandas as pd
 
 from . import utils
 
-__all__ = ["RandomSwitchTwoColumnsProcessor", "PaddingForBatchesProcessor"]
+__all__ = [
+    "RandomSwitchTwoColumnsProcessor",
+    "PaddingForBatchesProcessor",
+    "ChainOfThoughtProcessor",
+    "JsonKeysToColumnProcessor",
+]
 
 
 class BaseProcessor(abc.ABC):
     """Base class for a processor."""
 
-    def __init__(self, seed: int = 123):
+    # additional input and output keys that should be kept in the annotator
+    other_input_keys_to_keep = []
+    other_output_keys_to_keep = []
+
+    def __init__(
+        self,
+        seed: int = 123,
+        annotation_column: str = "annotation",
+        completion_column: str = "raw_completion",
+    ):
         self.seed = seed
+        self.annotation_column = annotation_column
+        self.completion_column = completion_column
 
     @abc.abstractmethod
     def preprocess(self, df_to_annotate: pd.DataFrame) -> pd.DataFrame:
@@ -41,12 +58,12 @@ class RandomSwitchTwoColumnsProcessor(BaseProcessor):
     two_columns_to_switch : Sequence[str]
         The two columns to switch.
 
-    replace_if_swtich_kwargs : dict, optional
-        Arguments to pass to `df.replace` to replace some values in the dataframe when there was a switch.
+    fn_replace_if_switch : Optional[Callable[[pd.DataFrame], pd.DataFrame]], optional
+        Function to apply to the dataframe formed of the rows with a switch. By default, does nothing.
 
-    replace_if_unswitch_kwargs : dict, optional
-        Arguments to pass to `df.replace` to replace some values in the dataframe when you are undoing a switch.
-        By default, applies the same as `replace_if_switch_kwargs`.
+    fn_replace_if_unswitch : Optional[Callable[[pd.DataFrame], pd.DataFrame]], optional
+        Function to apply to the dataframe formed of the rows without a switch. By default, applies the same as
+        `fn_replace_if_switch`.
 
     random_seed_columns : Optional[Sequence[str]], optional
         The columns to use to seed the random choice of switching or not. If None, will use `columns_to_switch`.
@@ -59,7 +76,7 @@ class RandomSwitchTwoColumnsProcessor(BaseProcessor):
     >>> df = pd.DataFrame([dict(instruction='2+2', output_1='10', output_2='4', preference=2),
     ...                    dict(instruction='2+3', output_1='5', output_2='7', preference=1)])
     >>> processor = RandomSwitchTwoColumnsProcessor(two_columns_to_switch=['output_1', 'output_2'],
-    ...                                                replace_if_switch_kwargs={'preference': {1: 2, 2: 1}})
+    ...                                             fn_replace_if_switch = lambda x: x.replace({"preference":{1: 2, 2: 1}}))
     >>> processor.preprocess(df)
         instruction output_1 output_2  preference is_switch_output_1_output_2
     0         2+2         4       10           1                         True
@@ -71,8 +88,8 @@ class RandomSwitchTwoColumnsProcessor(BaseProcessor):
     def __init__(
         self,
         two_columns_to_switch: Sequence[str],
-        replace_if_switch_kwargs: dict = None,
-        replace_if_unswitch_kwargs: dict = None,
+        fn_replace_if_switch=None,
+        fn_replace_if_unswitch=None,
         random_seed_columns: Optional[Sequence[str]] = None,
         _switch_column: Optional[str] = None,
         **kwargs,
@@ -82,8 +99,9 @@ class RandomSwitchTwoColumnsProcessor(BaseProcessor):
             raise ValueError(
                 f"two_columns_to_switch should have exactly two different columns but {two_columns_to_switch}"
             )
-        self.replace_if_switch_kwargs = replace_if_switch_kwargs or {}
-        self.replace_if_unswitch_kwargs = replace_if_unswitch_kwargs or self.replace_if_switch_kwargs
+        self.fn_replace_if_switch = fn_replace_if_switch or (lambda x: x)
+        # by default we assume that it's an involutive function
+        self.fn_replace_if_unswitch = fn_replace_if_unswitch or self.fn_replace_if_switch
 
         # `switch_column` used for backward compatibility
         if _switch_column is None:
@@ -136,11 +154,10 @@ class RandomSwitchTwoColumnsProcessor(BaseProcessor):
         df[self.col2] = np.where(is_switch_arr, col1_values, col2_values)
         df[self.col1] = np.where(is_switch_arr, col2_values, col1_values)
 
-        # replace might not be an involution e.g. if using a regex
         if is_switch:
-            df.loc[is_switch_arr, :] = df.loc[is_switch_arr, :].replace(self.replace_if_switch_kwargs)
+            df.loc[is_switch_arr, :] = self.fn_replace_if_switch(df.loc[is_switch_arr, :])
         else:
-            df.loc[is_switch_arr, :] = df.loc[is_switch_arr, :].replace(self.replace_if_unswitch_kwargs)
+            df.loc[is_switch_arr, :] = self.fn_replace_if_unswitch(df.loc[is_switch_arr, :])
 
         return df
 
@@ -190,3 +207,112 @@ class PaddingForBatchesProcessor(BaseProcessor):
 
     def postprocess(self, df_annotated: pd.DataFrame) -> pd.DataFrame:
         return df_annotated[~df_annotated["is_padding"].astype(bool)].drop(columns=["is_padding"]).copy()
+
+
+class ChainOfThoughtProcessor(BaseProcessor):
+    r"""Processes the raw completions by extracting the chain of thought as a new column
+    by loading them as a JSON and, if chain of thought is used, adding a dictionary
+    "referenced_models" to better understand which model names correspond to which outputs in the chain of thought.
+
+    Examples
+    --------
+    >>> raw_completion = '{"concise_explanation": "M is better", "ordered_models": [{"rank": 1, "model": "M"}, {"rank": 2, "model": "m"}]}'
+    >>> df = pd.DataFrame([dict(preference=2, raw_completion=raw_completion),
+    ...                    dict(preference=1, raw_completion=raw_completion)])
+    >>> processor = ChainOfThoughtProcessor()
+    >>> processor.postprocess(df)[["referenced_models", "concise_explanation"]]
+                        referenced_models concise_explanation
+    0  {'M': 'output_2', 'm': 'output_1'}         M is better
+    1  {'M': 'output_1', 'm': 'output_2'}         M is better
+    """
+    # those columns should be added to the final result
+    other_output_keys_to_keep = ["referenced_models", "concise_explanation"]
+
+    def preprocess(self, df_to_annotate: pd.DataFrame) -> pd.DataFrame:
+        return df_to_annotate
+
+    @property
+    def _tmp_col(self):
+        return "json_" + self.completion_column
+
+    def postprocess(self, df_annotated: pd.DataFrame) -> pd.DataFrame:
+        """Load the raw completion as a JSON and add the referenced models to better understand chain of thought."""
+        df_annotated = df_annotated.copy()
+
+        if self.completion_column in df_annotated:
+            df_annotated[self._tmp_col] = df_annotated[self.completion_column].apply(_try_json_load)
+            self.add_referenced_model_(df_annotated)
+            # add the concise explanation
+            df_annotated["concise_explanation"] = df_annotated[self._tmp_col].apply(
+                lambda x: x.get("concise_explanation", None)
+            )
+            df_annotated = df_annotated.drop(columns=[self._tmp_col])
+
+        return df_annotated
+
+    def add_referenced_model_(self, df):
+        """Add a dictionary to better understand chain of thought in case it's useful"""
+        df["referenced_models"] = None
+
+        for i, r in df.iterrows():
+            if (
+                isinstance(r[self._tmp_col], dict)
+                and "concise_explanation" in r[self._tmp_col]
+                and "ordered_models" in r[self._tmp_col]
+            ):
+                preference = int(df.loc[i, "preference"])
+                ordered_models = df.loc[i, self._tmp_col]["ordered_models"]
+                for m in ordered_models:
+                    if m["rank"] == 1:
+                        first_model = m["model"]
+                    elif m["rank"] == 2:
+                        second_model = m["model"]
+                    else:
+                        assert False
+
+                df.at[i, "referenced_models"] = {
+                    first_model: f"output_{preference}",
+                    second_model: f"output_{3 - preference}",
+                }
+
+
+class JsonKeysToColumnProcessor(BaseProcessor):
+    r"""Processes the raw completions by extracting the chain of thought as a new column
+    by loading them as a JSON and, if chain of thought is used, adding a dictionary
+    "referenced_models" to better understand which model names correspond to which outputs in the chain of thought.
+    """
+
+    def __init__(self, *args, json_keys_to_keep: list[str], **kwargs):
+        self.json_keys_to_keep = json_keys_to_keep
+        super().__init__(*args, **kwargs)
+
+    @property
+    def other_output_keys_to_keep(self):
+        return self.json_keys_to_keep
+
+    def preprocess(self, df_to_annotate: pd.DataFrame) -> pd.DataFrame:
+        return df_to_annotate
+
+    @property
+    def _tmp_col(self):
+        return "json_" + self.completion_column
+
+    def postprocess(self, df_annotated: pd.DataFrame) -> pd.DataFrame:
+        """Load the raw completion as a JSON and add the referenced models to better understand chain of thought."""
+        df_annotated = df_annotated.copy()
+
+        if self.completion_column in df_annotated:
+            df_annotated[self._tmp_col] = df_annotated[self.completion_column].apply(_try_json_load)
+            for key in self.json_keys_to_keep:
+                df_annotated[key] = df_annotated[self._tmp_col].apply(lambda x: x.get(key, None))
+            df_annotated = df_annotated.drop(columns=[self._tmp_col])
+
+        return df_annotated
+
+
+def _try_json_load(el):
+    """Try to load as json"""
+    try:
+        return json.loads(el)
+    except:
+        return el

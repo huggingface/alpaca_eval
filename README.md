@@ -5,6 +5,10 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/release/python-3100/)
 [![discord](https://img.shields.io/badge/discord-server-blue?logo=discord&logoColor=white)](https://discord.gg/GJMxJSVZZM)
 
+:tada: **AlpacaEval 2.0** is out and used by default! We improved the auto-annotator (better and cheaper) and use GPT-4 turbo as baseline. More details [here](#alpacaeval-20). For the old version, set your environment variable `IS_ALPACA_EVAL_2=False`.
+
+---
+
 Evaluation of instruction-following models (e.g., ChatGPT) typically requires human interactions. This is
 time-consuming, expensive, and hard to replicate. AlpacaEval in an LLM-based automatic evaluation that is fast, cheap,
 replicable, and validated against 20K human annotations.
@@ -13,11 +17,11 @@ Although we improved over prior automatic evaluation pipelines, there are still 
 AlpacaEval provides the following:
 
 - [**Leaderboard**](https://tatsu-lab.github.io/alpaca_eval/): a leaderboard of common models on the AlpacaEval
-  evaluation set. **Caution**: Automatic evaluator (e.g. GPT4) may be biased towards models that generate longer outputs and/or that were fine-tuned on the model underlying the evaluator (e.g. GPT4).
+  evaluation set. **Caution**: Automatic evaluators (e.g. GPT-4) may be biased towards models that generate longer outputs and/or that were fine-tuned on the model underlying the evaluator (e.g. GPT-4).
 - [**Automatic evaluator**](#evaluators): an automatic evaluator that has high agreement with humans (validated on 20K
   annotations). We evaluate a
   model by
-  measuring the fraction of times an powerful LLM (e.g. GPT 4 or Claude or ChatGPT) prefers the outputs from that model
+  measuring the fraction of times a powerful LLM (e.g. GPT-4) prefers the outputs from that model
   over
   outputs from a reference model. Our evaluators enable caching and output randomization by default.
 - [**Toolkit for building automatic evaluators**](#analysis): a simple interface for
@@ -27,11 +31,13 @@ AlpacaEval provides the following:
   on the [AlpacaFarm](https://github.com/tatsu-lab/alpaca_farm/tree/main)
   evaluation set. 2.5K of these are cross-annotations (4 humans annotating the same 650 examples).
 - [**AlpacaEval dataset**](https://huggingface.co/datasets/tatsu-lab/alpaca_eval/blob/main/alpaca_eval.json): a simplification
-  of [AlpacaFarm's](https://github.com/tatsu-lab/alpaca_farm/tree/main) evaluation set, where "instructions" and "
-  inputs" are merged
-  into one field, and reference outputs are longer. [Details here](#data-release).
+  of [AlpacaFarm's](https://github.com/tatsu-lab/alpaca_farm/tree/main) evaluation set, where "instructions" and "inputs" are merged into one field, and reference outputs are longer. [Details here](#data-release).
 
-**When to use AlpacaEval?** Our automatic evaluator is a quick and cheap proxy for human evaluation of simple
+<details>
+  <summary><b>When to use and not use AlpacaEval?</b></summary>
+
+**When to use AlpacaEval?**
+Our automatic evaluator is a quick and cheap proxy for human evaluation of simple
 instruction-following tasks.
 It is useful if you
 have to run many evaluations quickly, e.g., during model development.
@@ -44,6 +50,8 @@ evaluators may have biases such as favoring style over
 factuality of the answer; and (3) AlpacaEval does not measure the risks that a model could cause.
 Details in [limitations](#limitations).
 
+</details>
+
 <details open>
   <summary><b>Table of Contents</b></summary>
 
@@ -55,20 +63,22 @@ Details in [limitations](#limitations).
     - [Evaluating a model](#evaluating-a-model)
     - [Making a new leaderboard](#making-a-new-leaderboard)
     - [Making a new evaluator](#making-a-new-evaluator)
-4. [Analysis](#additional-analysis-and-plots)
-    - [Analyzing an evaluator](#analyzing-an-evaluator)
-    - [Analyzing an eval set](#analyzing-an-eval-set)
-5. [Contributing](#contributing)
+4. [Contributing](#contributing)
     - [Contributing a model](#contributing-a-model)
     - [Contributing an evaluator](#contributing-an-evaluator)
     - [Contributing an eval set](#contributing-an-eval-set)
     - [Contributing a completion function](#contributing-a-completion-function)
-6. [Limitations](#limitations)
+5. [Limitations](#limitations)
+6. [Analysis](#additional-analysis-and-plots)
+    - [Analyzing an evaluator](#analyzing-an-evaluator)
+    - [Analyzing an eval set](#analyzing-an-eval-set)
 7. [Citation](#citation)
 8. [Additional information](#additional-information)
+    - [AlpacaEval 2.0](#alpacaeval-20)
     - [Data Release](#data-release)
     - [Differences with AlpacaFarm](#differences-with-alpacafarm)
     - [Related work](#related-work)
+    - [Interpreting annotations](#interpreting-annotations)
     - [Major updates](#major-updates)
 
 </details>
@@ -90,8 +100,7 @@ pip install git+https://github.com/tatsu-lab/alpaca_eval
 Then you can use it as follows:
 
 ```bash
-export OPENAI_API_KEY=<your_api_key>
-export OPENAI_ORGANIZATION_IDS=<your_organization_id>  # Optional; if not set, this will be your default org id.
+export OPENAI_API_KEY=<your_api_key> # for more complex configs, e.g. using Azure or switching clients see client_configs/README.md 
 alpaca_eval --model_outputs 'example/outputs.json' 
 ```
 
@@ -100,22 +109,18 @@ This will print the leaderboard to the console, and save both the leaderboard an
 - **model_outputs** : A path to a json file for the outputs of the model to add to the leaderboard. Each dictionary
   should
   contain the keys `instruction` and `output`.
-- **annotators_config**: This is the annotator to use (e.g., `alpaca_eval_gpt4` or `claude`
-  or `chatgpt_fn`). `alpaca_eval_gpt4` (
-  default) has the
-  highest agreement rate with our human annotation data. `claude` has a decent agreement and is free for
-  academics. `chatgpt_fn` is the worst of the three, but is available to everyone, cheap, and has 2x larger context
-  window (16K tokens). For a comparison of annotators see [here](#evaluators).
+- **annotators_config**: This is the annotator to use. We recommend using `weighted_alpaca_eval_gpt4_turbo` (
+  default for AlpacaEval 2.0), which has a
+  high agreement rate with our human annotation data, large context size, and is pretty cheap. For a comparison of all annotators see [here](#evaluators).
 - **reference_outputs**:  The outputs of the reference model. Same format as `model_outputs`. By default, this
-  is `text-davinci003` outputs on
-  AlpacaEval dataset.
+  is `gpt4_turbo` for AlpacaEval 2.0.
 - **output_path**: Path for saving annotations and leaderboard.
 
 If you don't have the model outputs, you can
 use [`evaluate_from_model`](https://github.com/tatsu-lab/alpaca_eval/tree/main#evaluating-a-model) and
 pass a local path or a name of a
 HuggingFace
-model, or a model from a standard API (OpenAI, Anthropic, Cohere). Other commands:
+model, or a model from a standard API (OpenAI, Anthropic, Cohere, google, ...). Other commands:
 
 <details open>
   <summary><code>>>> alpaca_eval -- --help</code></summary>
@@ -137,7 +142,7 @@ COMMANDS
        Precompute and save an entire leaderboard for a given dataset / evaluator / set of models generations.
 
      analyze_evaluators
-       Analyze an evaluator (agreement with human, speed, price,...).
+       Analyze an evaluator and populates the evaluators leaderboard (agreement with human, speed, price,...).
 ```
 
 </details>
@@ -149,29 +154,28 @@ For more information about each function use `alpaca_eval <command> -- --help`.
 ## Models
 
 Our leaderboards are computed on the [AlpacaEval dataset](https://huggingface.co/datasets/tatsu-lab/alpaca_eval).
-We precomputed the leaderboard for important models using `alpaca_eval_gpt4` (best quality),  `claude` (free for
-academics, and high quality), and `chatgpt_fn` (cheap and available for everyone). Our full leaderboards can be found
-at [on this page](https://tatsu-lab.github.io/alpaca_eval/), but
-we give minimal leaderboards below.
+We precomputed the leaderboard for important models using different baseline models and autoannotators. 
+Our two main leaderboards ("AlpacaEval 2.0" and "AlpacaEval") can be found
+[on this page](https://tatsu-lab.github.io/alpaca_eval/).
+"AlpacaEval 2.0" uses `weighted_alpaca_eval_gpt4_turbo` for the annotator and `gpt4_turbo` for the baseline.
+"AlpacaEval" uses `alpaca_eval_gpt4` for the annotator and `text_davinci_003` for the baseline.
+For all precomputed leaderboards see [here](https://github.com/tatsu-lab/alpaca_eval/tree/main/src/alpaca_eval/leaderboards).
 Later we also show how to [add your model](https://github.com/tatsu-lab/alpaca_eval#evaluating-a-model) to the
 leaderboard and how to make
 a [new leaderboard for your evaluator/dataset](https://github.com/tatsu-lab/alpaca_eval#making-a-new-leaderboard).
 See [here](https://github.com/tatsu-lab/alpaca_eval/tree/main/src/alpaca_eval/models_configs) for the configs of all
 models that are available out of the box.
 
-**`alpaca_eval_gpt4` minimal leaderboard**:
+**AlpacaEval minimal leaderboard**:
 
 |                       | Win Rate | Std Error |
 |:----------------------|---------:|----------:|
 | gpt4                  |     95.3 |       0.7 |
 | claude                |     88.4 |       1.1 |
 | chatgpt               |     86.1 |       1.2 |
-| wizardlm-13b          |     75.3 |       1.5 |
 | guanaco-65b           |     71.8 |       1.6 |
 | vicuna-13b            |     70.4 |       1.6 |
-| oasst-rlhf-llama-33b  |     66.5 |       1.7 |
 | text_davinci_003      |     50.0 |       0.0 |
-| falcon-40b-instruct   |     45.7 |       1.8 |
 | alpaca-farm-ppo-human |     41.2 |       1.7 |
 | alpaca-7b             |     26.5 |       1.5 |
 | text_davinci_001      |     15.2 |       1.2 |
@@ -179,30 +183,24 @@ models that are available out of the box.
 <details>
   <summary><b>How exactly are those metrics computed?</b></summary>
 
-**Win Rate**: the win rate measures the fraction of time the model's output is preferred over text-davinci-003 outputs (
-i.e. the reference).
+**Win Rate**: the win rate measures the fraction of time the model's output is preferred over the reference's outputs (`test-davinci-003` for AlpacaEval and `gpt4_turbo` for AlpacaEval 2.0).
 More specifically, to compute the win rate we collect pairs of outputs of the desired model on every instruction from
-the
-ApacaEval dataset.
-We then pair each output with the output of our reference model (`text-davinci-003`) on the same instruction.
+the ApacaEval dataset.
+We then pair each output with the output of our reference model (e.g. `text-davinci-003`) on the same instruction.
 We then ask our automatic evaluator which output they prefer.
-See [here](https://github.com/tatsu-lab/alpaca_eval/tree/main/src/alpaca_eval/evaluators_configs/alpaca_eval_gpt4)
-and [here](https://github.com/tatsu-lab/alpaca_eval/tree/main/src/alpaca_eval/evaluators_configs/claude) for the exact
-prompts and configs for GPT4 and Claude, in particular we randomize the order of
+See [AlpacaEval's](https://github.com/tatsu-lab/alpaca_eval/tree/main/src/alpaca_eval/evaluators_configs/alpaca_eval_gpt4)
+and [AlpacaEval 2.0's](https://github.com/tatsu-lab/alpaca_eval/tree/main/src/alpaca_eval/evaluators_configs/weighted_alpaca_eval_gpt4_turbo) prompts and configs, in particular we randomize the order of
 outputs to avoid position bias.
-We then average the preferences over all instructions in the dataset to get the win rate of the model over
-text-davinci-003.
+We then average the preferences over all instructions in the dataset to get the win rate of the model over the baseline.
 If both outputs are exactly the same we use a half preference for both models.
 
 **Standard error**: this is the standard error (normalized by N-1) of the win rate, i.e., the preferences averaged over
 the different instructions.
 
-[//]: # (The standard error measures the uncertainty over instructions and sampling from the evaluator.)
-
 </details>
 
 <details>
-  <summary><b>Details about <code>alpaca_eval_gpt4</code></b></summary>
+  <summary><b>Details about our auto-annotator: <code>alpaca_eval_gpt4</code></b></summary>
 
 Our `alpaca_eval_gpt4` (
 see [configs](#https://github.com/tatsu-lab/alpaca_eval/blob/main/src/alpaca_eval/evaluators_configs/alpaca_eval_gpt4/configs.yaml#L5))
@@ -224,54 +222,19 @@ similar to that of Aviary.
 We make changes to Aviary's prompt to decrease the bias for longer outputs.
 Details in [Related work](#related-work).
 
-</details>
-
-<details>
-  <summary><b><code>claude</code> minimal leaderboard</b></summary>
-
-|                       | Win Rate | Std Error |
-|:----------------------|---------:|----------:|
-| gpt4                  |     77.0 |       1.5 |
-| claude                |     75.8 |       1.5 |
-| chatgpt               |     67.7 |       1.6 |
-| wizardlm-13b          |     66.1 |       1.7 |
-| vicuna-13b            |     63.2 |       1.7 |
-| guanaco-65b           |     62.6 |       1.7 |
-| oasst-rlhf-llama-33b  |     57.3 |       1.7 |
-| text_davinci_003      |     50.0 |       0.0 |
-| falcon-40b-instruct   |     46.7 |       1.8 |
-| alpaca-farm-ppo-human |     46.5 |       1.8 |
-| alpaca-7b             |     32.3 |       1.6 |
-| text_davinci_001      |     21.5 |       1.4 |
+For AlpacaEval 2.0 we use `weighted_alpaca_eval_gpt4_turbo`, which uses logprobs to compute continuous preference and uses GPT4_turbo as model (
+see [configs](#https://github.com/tatsu-lab/alpaca_eval/blob/main/src/alpaca_eval/evaluators_configs/weighted_alpaca_eval_gpt4_turbo/configs.yaml)).
 
 </details>
 
-<details>
-  <summary><b><code>chatgpt_fn</code> minimal leaderboard</b></summary>
 
-|                       | Win Rate | Std Err. |
-|:----------------------|---------:|---------:|
-| gpt4                  |     73.8 |      1.5 |
-| claude                |     70.4 |      1.6 |
-| chatgpt               |     66.1 |      1.7 |
-| wizardlm-13b          |     65.2 |      1.7 |
-| vicuna-13b            |     64.1 |      1.7 |
-| guanaco-65b           |     62.4 |      1.7 |
-| oasst-rlhf-llama-33b  |     62.0 |      1.7 |
-| alpaca-farm-ppo-human |     60.2 |      1.7 |
-| falcon-40b-instruct   |     56.5 |      1.7 |
-| text_davinci_003      |     50.0 |      0.0 |
-| alpaca-7b             |     45.2 |      1.7 |
-| text_davinci_001      |     28.1 |      1.6 |
-
-</details>
 
 ## Evaluators
 
 We evaluate different automatic annotators on the AlpacaEval set by comparing to
 2.5K [human annotations](https://huggingface.co/datasets/tatsu-lab/alpaca_eval/blob/main/alpaca_farm_human_crossannotations.json)
 we collected (~650 instructions each with 4 human annotations).
-Below we show metrics for our suggested evaluator (`alpaca_eval_gpt4`), for prior
+Below we show metrics for our suggested evaluators (`weighted_alpaca_eval_gpt4_turbo`,`alpaca_eval_gpt4`), for prior
 automatic
 evaluators ([`alpaca_farm_greedy_gpt4`](https://github.com/tatsu-lab/alpaca_farm),[`aviary_gpt4`](https://aviary.anyscale.com/),[`lmsys_gpt4`](https://chat.lmsys.org/)),
 for humans (`humans`), and for different base models with essentially the same
@@ -279,19 +242,22 @@ prompt (`gpt4`,`claude`,`text_davinci_003`,`chatgpt_fn`,`guanaco_33b`, `chatgpt`
 See [here](https://github.com/tatsu-lab/alpaca_eval/tree/main/src/alpaca_eval/evaluators_configs) for the configs of all
 evaluators that are available out of the box and their associated metrics.
 
-|                         | Human agreement [%] | Price [$/1000 examples] | Time [seconds/1000 examples] | Bias | Variance | Proba. prefer longer |
-|:------------------------|--------------------:|------------------------:|-----------------------------:|-----:|---------:|--------------------:|
-| alpaca_eval_gpt4_fn     |                71.0 |                    14.5 |                         5046 | 27.6 |     11.1 |  0.75 |
-| alpaca_eval_gpt4        |                69.2 |                    13.6 |                         1455 | 28.4 |     14.6 |                 0.68 |
-| aviary_gpt4             |                69.1 |                    12.8 |                         1869 | 29.5 |     13.1 |                 0.70 |
-| gpt4                    |                66.9 |                    12.5 |                         1037 | 31.5 |     14.6 |                 0.65 |
-| alpaca_farm_greedy_gpt4 |                66.4 |                    15.3 |                          878 | 30.2 |     19.3 |                 0.60 |
-| humans                  |                65.7 |                   300.0 |                        36800 |  0.0 |     34.3 |                 0.64 |
-| claude                  |                65.5 |                    11.1 |                          173 | 31.9 |     18.0 |                 0.62 |
-| text_davinci_003        |                64.1 |                     8.7 |                          121 | 33.8 |     22.7 |                 0.70 |
-| lmsys_gpt4              |                63.2 |                    13.9 |                        17982 | 34.7 |     16.1 |                 0.74 |
-| chatgpt_fn              |                60.0 |                     1.0 |                          530 | 36.9 |     27.7 |                 0.62 |
-| chatgpt                 |                57.2 |                     0.8 |                          285 | 39.4 |     34.1 |                 0.59 |
+|                                 |   Human agreement |   Price [$/1000 examples] |   Time [seconds/1000 examples] |   Spearman corr. |   Pearson corr. |   Bias |   Variance |   Proba. prefer longer |
+|:--------------------------------|------------------:|--------------------------:|-------------------------------:|-----------------:|----------------:|-------:|-----------:|-----------------------:|
+| alpaca_eval_gpt4                |              69.2 |                      13.6 |                           1455 |             0.97 |            0.93 |   28.4 |       14.6 |                   0.68 |
+| alpaca_eval_cot_gpt4_turbo_fn   |              68.6 |                       6.3 |                           1989 |             0.97 |            0.90 |   29.3 |       18.4 |                   0.67 |
+| alpaca_eval_gpt4_turbo_fn       |              68.1 |                       5.5 |                            864 |             0.93 |            0.82 |   30.2 |       15.6 |                   0.65 |
+| gpt4                            |              66.9 |                      12.5 |                           1037 |             0.88 |            0.87 |   31.5 |       14.6 |                   0.65 |
+| alpaca_farm_greedy_gpt4         |              66.4 |                      15.3 |                            878 |             0.85 |            0.75 |   30.2 |       19.3 |                   0.60 |
+| alpaca_eval_cot_gpt4_turbo_fn |              65.7 |                       4.3 |                            228 |             0.78 |            0.77 |   33.9 |       23.7 |                   0.61 |
+| humans                          |              65.7 |                     300.0 |                          36800 |             1.00 |            1.00 |    0.0 |       34.3 |                   0.64 |
+| claude                          |              65.3 |                       3.3 |                            173 |             0.93 |            0.90 |   32.4 |       18.5 |                   0.66 |
+| lmsys_gpt4                      |              65.3 |                      13.9 |                          17982 |             0.98 |            0.97 |   31.6 |       15.9 |                   0.74 |
+| text_davinci_003                |              64.1 |                       8.7 |                            121 |             0.85 |            0.83 |   33.8 |       22.7 |                   0.70 |
+| longest                         |              62.2 |                       0.0 |                              0 |             0.27 |            0.56 |   37.8 |        0.0 |                   1.00 |
+| chatgpt                         |              57.3 |                       0.8 |                            285 |             0.72 |            0.71 |   39.4 |       34.1 |                   0.59 |
+
+
 
 <details>
   <summary><b>How exactly are those metrics computed?</b></summary>
@@ -299,7 +265,7 @@ evaluators that are available out of the box and their associated metrics.
 We now explain in words how we compute the metrics in the table
 above. [The code is here](https://github.com/tatsu-lab/alpaca_eval/blob/f05cbd651b79ac93906b19d01fe443b45828b0f2/src/alpaca_eval/analyze.py#L366).
 
-**Human agreement [%]**: this measures the agreement between the current annotator and the majority preferences of
+**Human agreement**: this measures the agreement between the current annotator and the majority preferences of
 humans on
 our
 ~650 annotations from
@@ -313,11 +279,9 @@ leave-one-out agreement.
 If the mode is not unique, we take one of the modes at random.
 We perform exactly the same computation for the automatic annotators, so that the final numbers are comparable.
 
-[//]: # ($$agreement = E[E_i[I[z_i == mode&#40;{z^*_j}_{j \neq i}&#41;]]]$$)
-
 **Price [$/1000 examples]**: this is the average price of every 1000 annotations.
 For humans, it is the price that [we paid Mechanical Turkers](https://arxiv.org/abs/2305.14387) to collect those
-annotations ($18/hour).
+annotations ($21/hour).
 If the price depends on the machine used to compute the annotations (e.g. Guanaco) we leave it empty.
 
 **Time [seconds/1000 examples]**: this is the average time it takes to compute 1000 annotations.
@@ -325,6 +289,10 @@ For humans, it is the estimated median time that each Mechanical Turker took to 
 For automatic annotators, it is the average time that it took us when running the annotations. Note that this can depend
 on API limits that are different for different users and the number of requests that the clusters are
 processing.
+
+**Spearman corr.**: this measures the Spearman correlation between a leaderboard computed with the auto-annotator's preference and the leaderboard computed with human preferences. As with `Human agreement`, we use the human annotations from AlpacaFarm but we now consider the method-level agreement rather than only the sample-wise agreement with humans. Note that we only use have 9 models and so the correlation is not very reliable. 
+
+**Pearson corr.**: same as with `Spearman corr.` but with Pearson correlation.
 
 **Bias**: agreement between the most likely human label and the most likely automatic one.
 For automatic annotators we estimate it by sampling 4 different annotations for each example.
@@ -339,7 +307,6 @@ For the case of humans, the bias is zero by definition.
 Note that this is related to but not the standard statistical bias, because we take the mode instead of average over
 annotations and we consider 0-1 loss instead of squared loss.
 
-[//]: # ($$agreement = 1 - E[E_i[I[mode&#40;{z_j}_{j \neq i} == mode&#40;{z^*_j}_{j \neq i}&#41;]]]$$)
 
 **Variance**: expected agreement a single automatic preference and the most likely one.
 We estimate it the same way as we estimated "human agreement" for humans, i.e., we take the expected leave one out error
@@ -354,14 +321,6 @@ Note that the "human agreement" is tightly related to the bias and variance. In 
 measures the error due to the fact that we only use a single annotation while the bias aims to measure the irreducible
 error
 for the current annotator.
-
-[//]: # (More specifically we have that `agreement ≈ &#40;1 - bias&#41;*&#40;1 - variance&#41; + bias*variance`.)
-
-[//]: # (Where the first term measures the agreement due to having no errors from bias and variance, while the second term)
-
-[//]: # (measures the accuracy due to having errors caused from both the bias and variance.)
-
-[//]: # ($$agreement = 1 - E[E_i[I[z_i == mode&#40;{z_j}_{j \neq i}&#41;]]]$$)
 
 **Proba. prefer longer**: this is the probability that the annotator prefers the longer output when one of the two
 outputs is significantly longer than the other (more than 30 characters difference).
@@ -386,15 +345,15 @@ due to resource (time and price) constraints. This explains why the #parsed is 6
 <details>
   <summary><b>Tips for choosing evaluators</b></summary>
 
-Overall we recommend using `annotators_config=alpaca_eval_gpt4` if you want the highest agreement with humans,
-`annotators_config=claude` if you have academic (free) access to Claude and have a low budget, and
-`annotators_config=chatgpt_fn` if you don't have access to the other two models.
+Overall we recommend using `annotators_config=weighted_alpaca_eval_gpt4_turbo` if you want the high agreement with humans, and
+`annotators_config=chatgpt_fn` if you are on a tight budget.
 
 When choosing an annotator we recommend you to consider the following (the first three are obvious):
 
 - `"Human agreement [%]"`
 - `"Price [$/1000 examples]"`
 - `"Time [seconds/1000 examples]"`
+- `"* corr."` approx. > 0.7. It is important that the correlation is not too low, but we do not recommend using it as the main metric as the correlation is computed on only 9 models. 
 - `"Proba. prefer longer"` approx. < 0.7. Indeed, we found see that the majority of preference of human annotators have
   strong bias for longer answers (as shown by the
   high [performance=62.2](https://github.com/tatsu-lab/alpaca_eval/blob/main/src/alpaca_eval/evaluators_configs/README.md)
@@ -412,7 +371,7 @@ lmsys for
 reference purposes). For
 all
 results see [here](https://github.com/tatsu-lab/alpaca_eval/blob/main/src/alpaca_eval/evaluators_configs/README.md).
-In general, we found `alpaca_eval_gpt4` to be a good trade-off between quality / price / time /
+In general, we found `weighted_alpaca_eval_gpt4_turbo` to be a good trade-off between quality / price / time /
 variance / length bias.
 
 </details>
@@ -425,47 +384,6 @@ Details in [limitations](#limitations).
 
 # Use-cases
 
-[//]: # ()
-
-[//]: # (<details>)
-
-[//]: # ()
-
-[//]: # (  <summary><b>Installation from source &#40;optional&#41;</b></b></summary>)
-
-[//]: # ()
-
-[//]: # (If you make changes to the configurations files or code, it might be easier to install `alpaca_eval` from source.)
-
-[//]: # (If so follow the following steps:)
-
-[//]: # ()
-
-[//]: # (1. clone the repository)
-
-[//]: # ()
-
-[//]: # (2. install as dev the package: `pip install -e .`)
-
-[//]: # ()
-
-[//]: # (3. &#40;optional&#41; export)
-
-[//]: # ()
-
-[//]: # (   all [API_KEYs]&#40;https://github.com/tatsu-lab/alpaca_eval/blob/main/src/alpaca_eval/constants.py#L7&#41;)
-
-[//]: # ()
-
-[//]: # (4. test your installation &#40;assuming you have OpenAI)
-
-[//]: # ()
-
-[//]: # (   key&#41; `alpaca_eval --model_outputs 'example/outputs.json' --annotators_config 'text_davinci_003' ~~--max_instances 3~~ --caching_path None`)
-
-[//]: # ()
-
-[//]: # (</details>)
 
 ## Evaluating a model
 
@@ -489,31 +407,24 @@ FLAGS
         The outputs of the model to add to the leaderboard. Accepts data (list of dictionary, pd.dataframe, datasets.Dataset) or a path to read those (json, csv, tsv) or a function to generate those. Each dictionary (or row of dataframe) should contain the keys that are formatted in the prompts. E.g. by default `instruction` and `output` with optional `input`. If None, we just print the leaderboard.
     -r, --reference_outputs=REFERENCE_OUTPUTS
         Type: Union
-        Defaul...
-        The outputs of the reference model. Same format as `model_outputs`. If None, the reference outputs are the
- 003 outputs on the AlpacaEval set.
+        Default: <func...
+        The outputs of the reference model. Same format as `model_outputs`. If None, the reference outputs are a specific set of Davinci 003 outputs on the AlpacaEval set:
     --annotators_config=ANNOTATORS_CONFIG
         Type: Union
-        Default: 'alpaca_eval_gpt4'
-        The path the (or list of dict of) the annotator's config file. For details see the docstring of `PairwiseA
-nnotator`.
+        Default: 'alpaca_eval_gpt4_turbo_fn'
+        The path the (or list of dict of) the annotator's config file. For details see the docstring of `PairwiseAnnotator`.
     -n, --name=NAME
         Type: Optional[Optional]
         Default: None
-        The name of the model to add to the leaderboard. If None we check if `generator is in model_outputs` if no
-t we use "Current model".
+        The name of the model to add to the leaderboard. If None we check if `generator is in model_outputs` if not we use "Current model".
     -o, --output_path=OUTPUT_PATH
         Type: Union
         Default: 'auto'
-        Path to the directory where the new leaderboard and the annotations should be stored. If None we don't sav
-e. If `auto` we use `model_outputs` if it is a path, and otherwise use the directory from which we call the script
-.
+        Path to the directory where the new leaderboard and the annotations should be stored. If None we don't save. If `auto` we use `model_outputs` if it is a path, and otherwise use the directory from which we call the script.
     -p, --precomputed_leaderboard=PRECOMPUTED_LEADERBOARD
         Type: Union
         Default: 'auto'
-        The precomputed leaderboard or a path to it (json, csv, or tsv). The leaderboard should contain at least t
-he column `win_rate`. If `auto` we will try to use the corresponding leaderboard for the reference outputs (only i
-f in CORRESPONDING_OUTPUTS_LEADERBOARDS). If `None` we won't add other models from the leaderboard.
+        The precomputed leaderboard or a path to it (json, csv, or tsv). The leaderboard should contain at least the column `win_rate`. If `auto` we will try to use the corresponding leaderboard for the reference outputs (only if in CORRESPONDING_OUTPUTS_LEADERBOARDS). If `None` we won't add other models from the leaderboard.
     --is_overwrite_leaderboard=IS_OVERWRITE_LEADERBOARD
         Type: bool
         Default: False
@@ -521,8 +432,7 @@ f in CORRESPONDING_OUTPUTS_LEADERBOARDS). If `None` we won't add other models fr
     -l, --leaderboard_mode_to_print=LEADERBOARD_MODE_TO_PRINT
         Type: Optional
         Default: 'minimal'
-        The mode of the leaderboard to use. Only used if the precomputed leaderboard has a column `mode`, in which
- case it will filter the leaderboard by this mode. If None keeps all.
+        The mode of the leaderboard to use. Only used if the precomputed leaderboard has a column `mode`, in which case it will filter the leaderboard by this mode. If None keeps all.
     -c, --current_leaderboard_mode=CURRENT_LEADERBOARD_MODE
         Type: str
         Default: 'community'
@@ -534,19 +444,15 @@ f in CORRESPONDING_OUTPUTS_LEADERBOARDS). If `None` we won't add other models fr
     -f, --fn_metric=FN_METRIC
         Type: Union
         Default: 'pairwise_to_winrate'
-        The function or function name in `metrics.py` that will be used to convert preference to metrics. The func
-tion should take a sequence of preferences (0 for draw, 1 for base win, 2 when the model to compare wins) and retu
-rn a dictionary of metrics and the key by which to sort the leaderboard.
+        The function or function name in `metrics.py` that will be used to convert preference to metrics. The function should take a sequence of preferences (0 for draw, 1 for base win, 2 when the model to compare wins) and return a dictionary of metrics and the key by which to sort the leaderboard.
     -s, --sort_by=SORT_BY
         Type: str
         Default: 'win_rate'
         The key by which to sort the leaderboard.
     --is_cache_leaderboard=IS_CACHE_LEADERBOARD
-        Type: Optional
+        Type: Optional[Optional]
         Default: None
-        Whether to save the result leaderboard to `precomputed_leaderboard`. If None we save only if max_instances
-. A preferred way of adding models to the leaderboard is to set `precomputed_leaderboard` to the previously saved
-leaderboard at `<output_path>/leaderboard.csv`.
+        Whether to save the result leaderboard to `precomputed_leaderboard`. If None we save only if max_instances not None. A preferred way of adding models to the leaderboard is to set `precomputed_leaderboard` to the previously saved leaderboard at `<output_path>/leaderboard.csv`.
     --max_instances=MAX_INSTANCES
         Type: Optional[Optional]
         Default: None
@@ -555,6 +461,9 @@ leaderboard at `<output_path>/leaderboard.csv`.
         Type: Optional[Optional]
         Default: None
         Additional arguments to pass to `PairwiseAnnotator.annotate_head2head`.
+    -A, --Annotator=ANNOTATOR
+        Default: <class 'alpaca_eval.annotators.pairwise_evaluator.PairwiseAn...
+        The annotator class to use.
     Additional flags are accepted.
         Additional arguments to pass to `PairwiseAnnotator`.
 ```
@@ -583,17 +492,15 @@ FLAGS
     -r, --reference_model_configs=REFERENCE_MODEL_CONFIGS
         Type: Optional[Union]
         Default: None
-        Same as in `model_configs` but for the reference model. If None, we use the same model as the one we are
+        Same as in `model_configs` but for the reference model. If None, we use the default Davinci003 outputs.
     -e, --evaluation_dataset=EVALUATION_DATASET
         Type: Union
-        Defaul...
-        Path to the evaluation dataset or a function that returns a dataframe. If None, we use the default evaluat
-ion
+        Default: <func...
+        Path to the evaluation dataset or a function that returns a dataframe. If None, we use the default evaluation
     -a, --annotators_config=ANNOTATORS_CONFIG
         Type: Union
-        Default: 'alpaca_eval_gpt4'
-        Path to the annotators configuration or a dictionary. If None, we use the default annotators configuration
-.
+        Default: 'alpaca_eval_gpt4_turbo_fn'
+        Path to the annotators configuration or a dictionary. If None, we use the default annotators configuration.
     -o, --output_path=OUTPUT_PATH
         Type: Union
         Default: 'auto'
@@ -602,10 +509,18 @@ ion
         Type: Optional[int]
         Default: None
         Maximum number of instances to generate and evaluate. If None, we evaluate all instances.
-    -i, --is_strip_output=IS_STRIP_OUTPUT
+    --is_strip_output=IS_STRIP_OUTPUT
         Type: bool
         Default: True
         Whether to strip trailing and leading whitespaces from the outputs.
+    --is_load_outputs=IS_LOAD_OUTPUTS
+        Type: bool
+        Default: True
+        Whether to try to load outputs from the output path. If True and outputs exist we only generate outputs for instructions that don't have outputs yet.
+    -c, --chunksize=CHUNKSIZE
+        Type: int
+        Default: 64
+        Number of instances to generate before saving. If None, we save after all generations.
     Additional flags are accepted.
         Other kwargs to `evaluate`
 
@@ -632,23 +547,20 @@ for example in eval_set:
 if your model is a HuggingFace model or from a standard API provider (OpenAI, Anthropic, Cohere). Then you can
 directly use `alpaca_eval evaluate_from_model` to also take care of generating outputs.
 
-2. Compute the reference outputs `reference_outputs`. By default, we use precomputed outputs of [`text-davinci-003` on
+2. Compute the reference outputs `reference_outputs`. By default, we use precomputed outputs of [`gpt4_turbo` on
    AlpacaEval](https://huggingface.co/datasets/tatsu-lab/alpaca_eval).
    If you
    want to use a different model or a different dataset follow the same steps as (1.).
-3. Choose an evaluator specified via `annotators_config`. We recommend using `alpaca_eval_gpt4` or `claude` (if you are
-   an
-   academic) or `chatgpt_fn` (if you don't have access to the other two). For options and comparisons
+3. Choose an evaluator specified via `annotators_config`. We recommend using `alpaca_eval_gpt4_turbo_fn`. For other options and comparisons
    see [this table](#evaluators). Depending on the evaluator you might need to
    set the appropriate API_KEY in your environment
-   or [here](https://github.com/tatsu-lab/alpaca_eval/blob/main/src/alpaca_eval/constants.py#L7).
+   or int the [client_configs](https://github.com/tatsu-lab/alpaca_eval/tree/main/client_configs).
 
 Running all together:
 
 ```bash
 alpaca_eval --model_outputs 'example/outputs.json' \
-  --annotators_config 'alpaca_eval_gpt4' \
-  --reference_outputs <path to outputs if not text_davinci_003 on AlpacaEval>
+  --annotators_config 'alpaca_eval_gpt4_turbo_fn'
 ```
 
 If you don't have decoded outputs, you can use `evaluate_from_model` which takes care of decoding (model and reference)
@@ -658,11 +570,9 @@ example:
 
 ```bash
 # need a GPU for local models
-export ANTHROPIC_API_KEY=<your_api_key> # let's annotate with claude
 alpaca_eval evaluate_from_model \
   --model_configs 'oasst_pythia_12b' \
-  --annotators_config 'claude' \
-  --reference_model_configs <path to configs not text_davinci_003 on AlpacaEval>        
+  --annotators_config 'alpaca_eval_gpt4_turbo_fn'      
 ```
 
 Here the `model_configs` and `reference_model_configs` (optional) are paths to a directory that specifies the prompt,
@@ -673,7 +583,7 @@ For all model providers that are available out-of-the-box
 see [here](https://github.com/tatsu-lab/alpaca_eval/tree/main/src/alpaca_eval/decoders).
 
 <details>
-  <summary><b>Information about annotators</b></b></summary>
+  <summary><b>Information about annotators</b></summary>
 
 - **Caching**: by default all annotations are cached on
   disk at `caching_path`. Annotations are thus never recomputed, which makes annotations faster, cheaper and allow for
@@ -705,50 +615,42 @@ NAME
     alpaca_eval make_leaderboard - Precompute and save an entire leaderboard for a given dataset / evaluator / set of models generations.
 
 SYNOPSIS
-    alpaca_eval make_leaderboard LEADERBOARD_PATH <flags>
+    alpaca_eval make_leaderboard <flags>
 
 DESCRIPTION
     Precompute and save an entire leaderboard for a given dataset / evaluator / set of models generations.
 
-POSITIONAL ARGUMENTS
-    LEADERBOARD_PATH
-        Type: Union
-        The path to save the leaderboard to. The leaderboard will be saved as a csv file, if it already exists it will
-
 FLAGS
+    --leaderboard_path=LEADERBOARD_PATH
+        Type: Optional[Union]
+        Default: None
+        The path to save the leaderboard to. The leaderboard will be saved as a csv file, if it already exists it will
     --annotators_config=ANNOTATORS_CONFIG
         Type: Union
-        Default: 'alpaca_eval_gpt4'
+        Default: 'alpaca_eval_gpt4_turbo_fn'
         The path the (or list of dict of) the annotator's config file.
     --all_model_outputs=ALL_MODEL_OUTPUTS
         Type: Union
         Default: <fu...
-        The outputs of all models to add to the leaderboard. Accepts data (list of dictionary, pd.dataframe, datas
-ets.Dataset) or a path to read those (json, csv, tsv potentially with globbing) or a function to generate those. I
-f the path contains a globbing pattern, we will read all files matching the pattern and concatenate them. Each dic
-tionary (or row of dataframe) should contain the keys that are formatted in the prompts. E.g. by default `instruct
-ion` and `output` with optional `input`. It should also contain a column `generator` with the name of the current
-model.
+        The outputs of all models to add to the leaderboard. Accepts data (list of dictionary, pd.dataframe, datasets.Dataset) or a path to read those (json, csv, tsv potentially with globbing) or a function to generate those. If the path contains a globbing pattern, we will read all files matching the pattern and concatenate them. Each dictionary (or row of dataframe) should contain the keys that are formatted in the prompts. E.g. by default `instruction` and `output` with optional `input`. It should also contain a column `generator` with the name of the current model.
     -r, --reference_outputs=REFERENCE_OUTPUTS
         Type: Union
-        Defaul...
-        The outputs of the reference model. Same format as `all_model_outputs` but without needing `generator`. By
- default, the reference outputs are the 003 outputs on AlpacaEval set.
+        Default: <func...
+        The outputs of the reference model. Same format as `all_model_outputs` but without needing `generator`. By default, the reference outputs are the 003 outputs on AlpacaEval set.
     -f, --fn_add_to_leaderboard=FN_ADD_TO_LEADERBOARD
         Type: Callable
         Default: 'evaluate'
-        The function to use to add a model to the leaderboard. If a string, it should be the name of a function in
- `main.py`. The function should take the arguments: `model_outputs`, `annotators_config`, `name`, `precomputed_lea
-derboard`, `is_return_instead_of_print`, `reference_outputs`.
+        The function to use to add a model to the leaderboard. If a string, it should be the name of a function in `main.py`. The function should take the arguments: `model_outputs`, `annotators_config`, `name`, `precomputed_leaderboard`, `is_return_instead_of_print`, `reference_outputs`.
+    --leaderboard_mode=LEADERBOARD_MODE
+        Type: str
+        Default: 'verified'
+        The mode of the leaderboard to save all new entries with.
     -i, --is_return_instead_of_print=IS_RETURN_INSTEAD_OF_PRINT
         Type: bool
         Default: False
         Whether to return the metrics instead of printing the results.
     Additional flags are accepted.
         Additional arguments to pass to `fn_add_to_leaderboard`.
-
-NOTES
-    You can also use flags syntax for POSITIONAL ARGUMENTS
 ```
 
 </details>
@@ -792,18 +694,18 @@ SYNOPSIS
     alpaca_eval analyze_evaluators <flags>
 
 DESCRIPTION
-    Analyze an evaluator (agreement with human, speed, price,...).
+    Analyze an evaluator and populates the evaluators leaderboard (agreement with human, speed, price,...).
 
 FLAGS
     --annotators_config=ANNOTATORS_CONFIG
         Type: Union
-        Default: 'alpaca_eval_gpt4'
+        Default: 'alpaca_eval_gpt4_turbo_fn'
         The path the (or list of dict of) the annotator's config file.
     -A, --Annotator=ANNOTATOR
         Default: <class 'alpaca_eval.annotators.pairwise_evaluator.PairwiseAn...
         The annotator class to use.
     --analyzer_kwargs=ANALYZER_KWARGS
-        Type: Optional[]
+        Type: Optional[Optional]
         Default: None
         Additional arguments to pass to the analyzer.
     -p, --precomputed_leaderboard=PRECOMPUTED_LEADERBOARD
@@ -830,6 +732,20 @@ FLAGS
         Type: bool
         Default: False
         Whether to analyze a single annotator. If True, will not be able to estimate the annotator's bias.
+    -l, --leaderboard_mode_to_print=LEADERBOARD_MODE_TO_PRINT
+        Type: str
+        Default: 'minimal'
+        The mode of the leaderboard to print.
+    -c, --current_leaderboard_mode=CURRENT_LEADERBOARD_MODE
+        Type: str
+        Default: 'minimal'
+        The mode of the leaderboard to save all new entries with.
+    -o, --output_path=OUTPUT_PATH
+        Type: Union
+        Default: 'auto'
+        Path to save the leaderboard and annotataions. If None, we don't save.
+    Additional flags are accepted.
+        Additional arguments to pass to `Annotator`.
 ```
 
 </details>
@@ -857,14 +773,9 @@ Here are some ways you can make a new evaluator:
   all providers
   use `pip install alpaca_eval[all]`.
 
-[//]: # (- **Using multiple annotators**: Specify a list of annotators in `annotators_config` in the configuration file. For an)
-
-[//]: # (  example)
-
-[//]: # (  see [alpaca_farm configuration]&#40;https://github.com/tatsu-lab/alpaca_eval/blob/main/src/alpaca_eval/evaluators_configs/alpaca_farm/configs.yaml&#41;.)
 
 <details>
-  <summary><b>Other parameters in the configuration file</b></b></summary>
+  <summary><b>Other parameters in the configuration file</b></summary>
 
 The easiest is to check the docstrings
 of [`SinglePairwiseAnnotator`](https://github.com/tatsu-lab/alpaca_eval/blob/main/src/alpaca_eval/annotators/pairwise_evaluator.py#L537).
@@ -912,100 +823,6 @@ evaluation.
 If you want a cheaper evaluation you can use a single seed using `--is_single_annotator True` which will skip the
 estimation of bias and variance.
 
-# Additional analysis and plots
-
-AlpacaEval provides a few visualization tools to help you analyze and improve your automatic evaluation pipeline. We
-briefly explain
-them here and provide
-notebooks for more analysis.
-For a description of all the metrics we consider
-refer to [How exactly are those metrics computed?](https://github.com/tatsu-lab/alpaca_eval#evaluators)
-
-## Analyzing an evaluator
-
-**Analyzing evaluators:**
-[![analyzing an evaluator](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tatsu-lab/alpaca_eval/blob/main/notebooks/analyzing_annotators.ipynb)
-
-As we saw in [the evaluator's leaderboard](#evaluators), there are many metrics to consider when selecting an evaluator,
-e.g. the quality, price, and speed. To assist with selection of the evaluator we provide a few functions to plot those
-metrics.
-The following shows for example the price/time/agreement of the different evaluators.
-
-![plot_quality_vs_price_and_time.png](figures%2Fplot_quality_vs_price_and_time.png)
-
-Here we see that `alpaca_eval_gpt4` performs very well and is better than humans on all the considered metrics.
-
-Previously we only considered the agreement with human annotators overall.
-An additional validation that one could do is checking whether making a leaderboard using our
-automatic annotator gives similar results as a leaderboard from humans.
-To enable such analysis, we release [human
-annotations](#data-release) of outputs from 22 methods from [AlpacaFarm](https://github.com/tatsu-lab/alpaca_farm) =>
-22*805 = ~18K annotations. As a result we
-can
-test
-the correlation between the win-rates of the 22 models as evaluated by the humans and our automatic annotator.
-Note that this is arguably a better way of selecting an automatic evaluator than using "human agreement [%]" but is
-expensive given that it requires 18K
-annotations.
-The plot below shows such correlation for the `alpaca_eval_gpt4` evaluator.
-
-<p float="left" align="middle">
-<img src="figures/plot_winrate_correlations_alpaca_eval.png" alt="Correlation between humans and alpaca_eval_gpt4" width="400"/>
-</p>
-
-We see that the `alpaca_eval_gpt4` leaderboard is highly correlated (0.94 Pearson correlation) to the leaderboard from
-humans, which further
-suggests that automatic evaluation is a good proxy for human evaluation.
-For the code and more analysis,
-see [this notebook](https://github.com/tatsu-lab/alpaca_eval/blob/main/notebooks/analyzing_annotators.ipynb), or the
-colab notebook above.
-
-## Analyzing an eval set
-
-**Making evaluation sets:**
-[![analyzing an evaluator](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tatsu-lab/alpaca_eval/blob/main/notebooks/analyzing_evalset.ipynb)
-
-When creating an evaluation set there are two main factors to consider: how much data to use? and what data?
-
-One way of answering those question is by considering a leaderboard of models that you believe are of different
-quality and checking what and how much data is needed to distinguish between them in a statistically significant way.
-We will do so below using a paired t-test to test if the difference in win-rates between every pair of models
-is
-statistically significant.
-
-First, let us consider the question of how much data to use.
-Below we show the number of random samples needed from AlpacaEval for the paired t-test to give a p-value < 0.05 for
-each pair of models in the minimal `alpaca_eval_gpt4`
-leaderboard.
-Grey cells correspond to pairs that are not significantly different on the 805 samples.
-y- and x-axis are ordered by the win-rate of the first and second model respectively.
-
-[//]: # (![plot_paired_ttest_nsamples.png]&#40;figures%2Fplot_paired_ttest_nsamples.png&#41;)
-
-<p float="left" align="middle">
-<img src="figures/plot_paired_ttest_nsamples.png" alt="Number of samples needed to distinguish pairs in the Claude leaderboard" width="500"/>
-</p>
-
-We see that most models can already be distinguished with 50 samples, and that 150 samples allows distinguishing the
-majority of pairs (74 out of 78). This suggests that we can decrease the evaluation set size by a factor of
-4 when testing two models that have similar performance gaps as those on the
-minimal `alpaca_eval_gpt4` [leaderboard](#models).
-
-The second question is what data to use. Again we can try to answer this question from a statistical power perspective:
-what data allows to best distinguish between models. Let's consider this for all the datasets that are part of
-AlpacaEval, but let us control for the size of the evaluation sets as we only care about the quality of the data. The
-following plot shows the p-values from the paired t-test of each pairs of models on 80 examples of each subset of
-AlpacaEval.
-
-![plot_paired_ttests_per_dataset.png](figures%2Fplot_paired_ttests_per_dataset.png)
-
-We see for example that the self-instruct dataset yields the least statistical power, which suggests that one could
-remove this dataset from the evaluation set.
-The exact reason should be analyzed in future work.
-For the code and more analysis
-see [this notebook](https://github.com/tatsu-lab/alpaca_eval/blob/main/notebooks/analyzing_evalset.ipynb), or the
-colab notebook above.
-
 # Contributing
 
 We are accepting PRs for new models, evaluators, and eval sets, in addition to bug fixes.
@@ -1031,8 +848,7 @@ An example command may look like:
 
 ```sh
 alpaca_eval evaluate_from_model \
-  --model_configs 'falcon-7b-instruct' \
-  --annotators_config 'alpaca_eval_gpt4'
+  --model_configs 'falcon-7b-instruct'
 ```
 
 After running this command, you should have generated an outputs json and a new entry in the corresponding [leaderboard
@@ -1050,11 +866,14 @@ Concretely you should do something like:
 git add src/alpaca_eval/models_configs/<model_name>
 git add src/alpaca_eval/leaderboards/data_AlpacaEval
 git add results/<model_name>/model_outputs.json
-git add results/<model_name>/annotations.json
+git add results/<model_name>/*/annotations.json
 git commit -m "Add <model_name> to AlpacaEval"
 git push
 ``` 
 5. Create a [pull request on AlpacaEval](https://github.com/tatsu-lab/alpaca_eval/pulls)
+
+Note: if you are generating outputs outside of AlpacaEval you should still add a model config but with `fn_completions: null`. 
+See [this config](https://github.com/tatsu-lab/alpaca_eval/blob/main/src/alpaca_eval/models_configs/dolphin-2.2.1-mistral-7b/configs.yaml) for an example.
 
 <details>
   <summary><h3 tabindex="-1" dir="auto">Getting your model verified</h3></summary>
@@ -1193,6 +1012,100 @@ instructions where Alpaca "performs" better than better model; and
 
 </details>
 
+
+# Additional analysis and plots
+
+AlpacaEval provides a few visualization tools to help you analyze and improve your automatic evaluation pipeline. We
+briefly explain
+them here and provide
+notebooks for more analysis. 
+For a description of all the metrics we consider
+refer to [How exactly are those metrics computed?](https://github.com/tatsu-lab/alpaca_eval#evaluators)
+
+## Analyzing an evaluator
+
+**Analyzing evaluators:**
+[![analyzing an evaluator](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tatsu-lab/alpaca_eval/blob/main/notebooks/analyzing_annotators.ipynb)
+
+As we saw in [the evaluator's leaderboard](#evaluators), there are many metrics to consider when selecting an evaluator,
+e.g. the quality, price, and speed. To assist with selection of the evaluator we provide a few functions to plot those
+metrics.
+The following shows for example the price/time/agreement of the different evaluators.
+
+![plot_quality_vs_price_and_time.png](figures%2Fplot_quality_vs_price_and_time.png)
+
+Here we see that `alpaca_eval_gpt4` performs very well and is better than humans on all the considered metrics.
+
+Previously we only considered the agreement with human annotators overall.
+An additional validation that one could do is checking whether making a leaderboard using our
+automatic annotator gives similar results as a leaderboard from humans.
+To enable such analysis, we release [human
+annotations](#data-release) of outputs from 22 methods from [AlpacaFarm](https://github.com/tatsu-lab/alpaca_farm) =>
+22*805 = ~18K annotations. As a result we
+can
+test
+the correlation between the win-rates of the 22 models as evaluated by the humans and our automatic annotator.
+Note that this is arguably a better way of selecting an automatic evaluator than using "human agreement [%]" but is
+expensive given that it requires 18K
+annotations.
+The plot below shows such correlation for the `alpaca_eval_gpt4` evaluator.
+
+<p float="left" align="middle">
+<img src="figures/plot_winrate_correlations_alpaca_eval.png" alt="Correlation between humans and alpaca_eval_gpt4" width="400"/>
+</p>
+
+We see that the `alpaca_eval_gpt4` leaderboard is highly correlated (0.94 Pearson correlation) to the leaderboard from
+humans, which further
+suggests that automatic evaluation is a good proxy for human evaluation.
+For the code and more analysis,
+see [this notebook](https://github.com/tatsu-lab/alpaca_eval/blob/main/notebooks/analyzing_annotators.ipynb), or the
+colab notebook above.
+
+## Analyzing an eval set
+
+**Making evaluation sets:**
+[![analyzing an evaluator](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tatsu-lab/alpaca_eval/blob/main/notebooks/analyzing_evalset.ipynb)
+
+When creating an evaluation set there are two main factors to consider: how much data to use? and what data?
+
+One way of answering those question is by considering a leaderboard of models that you believe are of different
+quality and checking what and how much data is needed to distinguish between them in a statistically significant way.
+We will do so below using a paired t-test to test if the difference in win-rates between every pair of models
+is
+statistically significant.
+
+First, let us consider the question of how much data to use.
+Below we show the number of random samples needed from AlpacaEval for the paired t-test to give a p-value < 0.05 for
+each pair of models in the minimal `alpaca_eval_gpt4`
+leaderboard.
+Grey cells correspond to pairs that are not significantly different on the 805 samples.
+y- and x-axis are ordered by the win-rate of the first and second model respectively.
+
+
+<p float="left" align="middle">
+<img src="figures/plot_paired_ttest_nsamples.png" alt="Number of samples needed to distinguish pairs in the Claude leaderboard" width="500"/>
+</p>
+
+We see that most models can already be distinguished with 50 samples, and that 150 samples allows distinguishing the
+majority of pairs (74 out of 78). This suggests that we can decrease the evaluation set size by a factor of
+4 when testing two models that have similar performance gaps as those on the
+minimal `alpaca_eval_gpt4` [leaderboard](#models).
+
+The second question is what data to use. Again we can try to answer this question from a statistical power perspective:
+what data allows to best distinguish between models. Let's consider this for all the datasets that are part of
+AlpacaEval, but let us control for the size of the evaluation sets as we only care about the quality of the data. The
+following plot shows the p-values from the paired t-test of each pairs of models on 80 examples of each subset of
+AlpacaEval.
+
+![plot_paired_ttests_per_dataset.png](figures%2Fplot_paired_ttests_per_dataset.png)
+
+We see for example that the self-instruct dataset yields the least statistical power, which suggests that one could
+remove this dataset from the evaluation set.
+The exact reason should be analyzed in future work.
+For the code and more analysis
+see [this notebook](https://github.com/tatsu-lab/alpaca_eval/blob/main/notebooks/analyzing_evalset.ipynb), or the
+colab notebook above.
+
 # Citation
 
 Please consider citing the repo if you used the automatic annotators, code, or results.
@@ -1208,6 +1121,7 @@ Please consider citing the repo if you used the automatic annotators, code, or r
 }
 ```
 
+Make sure to specify whether you are using AlpacaEval or AlpacaEval 2.0.
 If you used our human annotation data, please also consider citing the [AlpacaFarm](https://arxiv.org/abs/2305.14387)
 paper:
 
@@ -1227,6 +1141,17 @@ datasets: [self-instruct](https://github.com/yizhongw/self-instruct),
 [open-assistant](https://huggingface.co/datasets/OpenAssistant/oasst1/viewer/OpenAssistant--oasst1/validation), [vicuna](https://lmsys.org/blog/2023-03-30-vicuna/), [koala](https://github.com/arnav-gudibande/koala-test-set), [hh-rlhf](https://huggingface.co/datasets/Anthropic/hh-rlhf/viewer/Anthropic--hh-rlhf/test).
 
 # More information
+
+<details>
+  <summary><h2 tabindex="-1" dir="auto">AlpacaEval 2.0</h2></summary>
+
+AlpacaEval 2.0 is a new version of AlpacaEval. Here are the differences:
+- **reference: `gpt4_turbo`**: we upgraded the baseline from `text-davinci-003` to `gpt4_turbo` to make the benchmark more challenging and have a metric that better reflects the current state of the art.
+- **annotator: `weighted_alpaca_eval_gpt4_turbo`**: we improved the annotator in quality and price. First, we use the `gpt4_turbo` model for annotating, which is approximately 2x cheaper than `gpt4`. Second, we changed the prompt such that the model outputs a single token, which further reduced cost and speed. Finally, instead of using a binary preference, we used the logprobs to compute a continuous preference, which gives the final weighted win-rate. Note that the latter two changes had the surprising effect of decreasing the annotators' length biased.
+
+By default, AlpacaEval 2.0 will be used from `pip install alpaca_eval==0.5`. If you wish to use the old configs by default, you can set `IS_ALPACA_EVAL_2=False` in your environment.
+
+</details>
 
 <details>
   <summary><h2 tabindex="-1" dir="auto">Data Release</h2></summary>
@@ -1279,10 +1204,6 @@ Here are the main differences:
   back by
   using `--anotators_config 'alpaca_farm'` and `--p_label_flip 0.25` when creating an evaluator.
 
-[//]: # (- **Different goals** The goal of AlpacaEval is to provide a package for fast, reproducible,cheap, and)
-
-[//]: # (  high-quality automatic evaluation of instruction-following models. As a secondary goal, we also provide simple toolkit for developing new evaluators. The goal of AlpacaFarm was to provide a simulator for studying the human-based RLHF pipeline.)
-
 </details>
 
 <details>
@@ -1332,8 +1253,62 @@ For example:
 
 
 <details>
+  <summary><h2 tabindex="-1" dir="auto">Interpreting annotations</h2></summary>
+
+For all models you can find the auto-annotations under `results/<model_name>/*/annotations.json`. The annotations have the following columns:
+- `instruction`: the prompt
+- `generator_1`: the baseline model
+- `output_1`: the output of the baseline model
+- `generator_2`: the model being evaluated
+- `output_2`: the output of the model being evaluated
+- `annotator`: the auto-annotator
+- `preference`: the result of the auto-annotator. This is a float between 1 and 2. Closer to 1 means that the auto-annotator prefers `output_1`, closer to 2 means that it prefers `output_2`. For AlpacaEval 2.0, `preference-1` corresponds to the probability of `output_1` being preferred. For AlpacaEval 1.0, `preference` is 1 if `output_1` is preferred, 2 if `output_2` is preferred, and 1.5 if they are the same. The win rate is always`(preference -1).mean()`.
+- `raw_completion`: the raw output of the auto-annotator. 
+
+**Chain of through**
+
+For some annotators, e.g. `alpaca_eval_cot_gpt4_turbo_fn` we use **chain of thought reasoning** to make the models preferences more interpretable. Those can then be found under `concise_explanation`. To interpret them, you should also look at `referenced_models` which translates the temporary model name (in the prompt) to the actual output. Below, we provide more explanation as to what is happening behind the scenes.
+
+You can check the `raw_annotations["concise_explanation]` column in `annotations.json` (e.g. [here](https://github.com/tatsu-lab/alpaca_eval/tree/main/results/gpt4/alpaca_eval_cot_gpt4_turbo_fn/annotations.json)) which contains the chain of thought reasoning of the auto annotator. Note that the raw_annotations is not modified by the randomization of the order of the outputs. In particular, `"m"` and `"M"` can sometime refer to the first model (the reference) and sometime to the second model (the model being evaluated). To understand which model is being referred to, you should use the column `preference` and `ordered_models`. To make it easier we add a column `"referenced_models"` mapping the model names to the corresponding outputs. For example in the following annotation we see that the preference is 1.0 (i.e. `output_1`) and corresponds to model `M` in `concise_explanation` (see `ordered_models`).  
+
+```json 
+{
+  "instruction": "How did US states get their names?",
+  "output_1": "The names of U.S. states are derived from a variety of languages and sources, including indigenous American languages, European languages (primarily English, Spanish, and French), as well as other historical influences. Here is a brief overview of how some states got their names:\n\n1. **Indigenous American Languages**: Many state names come from Native American words or names of tribes, often from the languages of the indigenous peoples who lived in or near those areas.\n   - **Alabama**: Possibly derived from the Choctaw language, meaning \"thicket clearers.\"\n   - **Connecticut**: From a Mohegan-Pequot word meaning \"long tidal river.\"\n   - **Massachusetts**: [...]",
+  "generator_1": "gpt4_1106_preview",
+  "dataset": "helpful_base",
+  "output_2": "The names of the 50 U.S. states come from a variety of sources, including Native American languages, European languages, and historical figures. Here's a brief overview of how some states got their names:\n\n1. Native American origins: Many states have names derived from Native American languages. For example, Alabama comes from the Choctaw word \"Albah amo,\" meaning \"plant gatherers\" or \"herb gatherers.\" Similarly, the name Mississippi comes from the Ojibwe word \"Misi-ziibi,\" meaning \"great river.\"\n\n2. European languages: [...].",
+  "generator_2": "gpt4",
+  "annotator": "alpaca_eval_cot_gpt4_turbo_fn",
+  "preference": 1.0,
+  "raw_completion": {
+    "concise_explanation": "Model M provided a more detailed and structured response, including bold headings for each category and a wider range of examples. It also included additional categories such as 'Other European Languages' and 'Combination of Languages and Influences', which added depth to the explanation. Model m's response was accurate but less comprehensive and lacked the clear structure found in Model M's output.",
+    "ordered_models": [
+      {
+        "model": "M",
+        "rank": 1
+      },
+      {
+        "model": "m",
+        "rank": 2
+      }
+    ]
+  },
+  "referenced_models": {
+    "M": "output_1",
+    "m": "output_2"
+  }
+}
+```
+
+
+</details>
+
+<details>
   <summary><h2 tabindex="-1" dir="auto">Major updates</h2></summary>
 
+- 3rd January 2024: updated to AlpacaEval 2.0, which uses GPT4-turbo as baseline and annotator.
+- 2nd January 2024: added Azure API and more general way of setting client configs. See [here](https://github.com/tatsu-lab/alpaca_eval/tree/main/client_configs/README.md)
 - 19th June 2023: add leaderboard `chatgpt_fn` that anyone can use (no waiting lists).
 - 19th June 2023: update to
   use [OpenAI's function calling](https://openai.com/blog/function-calling-and-other-api-updates).

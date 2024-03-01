@@ -41,29 +41,28 @@ def vllm_local_completions(
         Additional kwargs to pass to from_pretrained.
 
     kwargs :
-        Additional kwargs to pass to `InferenceApi.__call__`.
+        Additional kwargs to SamplingParams
     """
     global llm, llmModelName
     tp = 1
     if "tp" in model_kwargs:
         tp = model_kwargs["tp"]
-    tokenizer_mode = model_kwargs["tokenizer_mode"] if "tokenizer_mode" in model_kwargs else "auto"
+    tokenizer_mode = model_kwargs.get("tokenizer_mode", "auto")
+    trust_remote_code = model_kwargs.get("trust_remote_code", False)
     if llm is None:
-        logging.info("vllm: loading model: %s, tp=%d", model_name, tp)
-        llm = LLM(model=model_name, tokenizer=model_name, tokenizer_mode=tokenizer_mode, tensor_parallel_size=tp)
+        logging.info("vllm: loading model: %s, tp=%d, trust_remote_code=%d", model_name, tp, trust_remote_code)
+        llm = LLM(
+            model=model_name,
+            tokenizer=model_name,
+            tokenizer_mode=tokenizer_mode,
+            tensor_parallel_size=tp,
+            trust_remote_code=trust_remote_code,
+        )
         llmModelName = model_name
     if model_name != llmModelName:
         assert False, "vllm_local_completions can only be used with a single model"
 
-    sampling_params = SamplingParams(max_tokens=max_new_tokens)
-    if "temperature" in kwargs:
-        sampling_params.temperature = kwargs["temperature"]
-    if "top_p" in kwargs:
-        sampling_params.top_p = kwargs["top_p"]
-    if "top_k" in kwargs:
-        sampling_params.top_k = kwargs["top_k"]
-    if "stop_token_ids" in kwargs:
-        sampling_params.stop_token_ids = kwargs["stop_token_ids"]
+    sampling_params = SamplingParams(max_tokens=max_new_tokens, **kwargs)
     if do_sample:
         sampling_params.use_beam_search = True
     completions = []

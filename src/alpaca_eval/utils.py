@@ -15,6 +15,7 @@ from typing import Any, Callable, Optional, Sequence, Union
 
 import datasets
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import pkg_resources
 import tqdm
@@ -238,10 +239,15 @@ def check_pkg_atleast_version(package, atleast_version):
     return pkg_resources.parse_version(curr_version) > pkg_resources.parse_version(atleast_version)
 
 
-def load_or_convert_to_dataframe(df=Union[AnyPath, AnyData, Callable], **kwargs):
+def load_or_convert_to_dataframe(df=Union[AnyPath, AnyData, Callable, list, tuple], **kwargs):
     """Load a dataframe from a path or convert the input to a dataframe if it's not a path."""
     if isinstance(df, Callable):
         df = df(**kwargs)
+
+    if isinstance(df, (tuple, list)) and isinstance(df[0], (str, os.PathLike, pathlib.Path)):
+        df = pd.concat(
+            [load_or_convert_to_dataframe(f, **kwargs) for f in df],
+        )
 
     if isinstance(df, (str, os.PathLike, pathlib.Path)):
         df = Path(df)
@@ -388,16 +394,20 @@ def get_precomputed_leaderboard(precomputed_leaderboard, reference_outputs, anno
     return leaderboard, precomputed_leaderboard
 
 
-def get_output_path(output_path, model_outputs, name):
+def get_output_path(output_path, model_outputs, name, dflt_dir="results"):
     if output_path == "auto":
         if model_outputs is None:
             output_path = None
         else:
             try:
-                output_path = Path(model_outputs).parent
+                if Path(model_outputs).exists():
+                    output_path = Path(model_outputs).parent
             except:
+                pass
+
+            if output_path == "auto":
                 if name is not None:
-                    output_path = Path("results") / name
+                    output_path = Path(dflt_dir) / name
                 else:
                     output_path = "."
     if output_path is not None:
@@ -406,24 +416,31 @@ def get_output_path(output_path, model_outputs, name):
     return output_path
 
 
-def print_leaderboard(df_leaderboard, leaderboard_mode, cols_to_print, current_name=None):
+def print_leaderboard(df_leaderboard, leaderboard_mode_or_models, cols_to_print, current_name=None):
     cols_to_print = list(cols_to_print)
 
-    if leaderboard_mode is not None:
+    if isinstance(leaderboard_mode_or_models, str):
         if "mode" in df_leaderboard.columns:
             # select all modes that come before
-            current_idx = constants.ORDERED_LEADERBOARD_MODES.index(leaderboard_mode)
+            current_idx = constants.ORDERED_LEADERBOARD_MODES.index(leaderboard_mode_or_models)
             df_leaderboard["mode_idx"] = df_leaderboard["mode"].apply(constants.ORDERED_LEADERBOARD_MODES.index)
 
             is_smaller_mode = df_leaderboard["mode_idx"] <= current_idx
             is_selected = is_smaller_mode | (df_leaderboard["mode"].isnull())
 
-            if current_name is not None:
-                is_selected |= df_leaderboard.index == current_name
+    elif isinstance(leaderboard_mode_or_models, Sequence):
+        # check the index of the models
+        is_selected = df_leaderboard.index.isin(leaderboard_mode_or_models)
 
-            df_leaderboard = df_leaderboard[is_selected]
     elif "mode" in df_leaderboard.columns:
         cols_to_print = cols_to_print + ["mode"]
+        is_selected = [True] * len(df_leaderboard)
+
+    if current_name is not None:
+        is_selected |= df_leaderboard.index == current_name
+
+    df_leaderboard = df_leaderboard[is_selected]
+
     print(df_leaderboard[cols_to_print].to_string(float_format="%.2f"))
 
 
@@ -482,3 +499,82 @@ def dataframe_chunk_generator(df: pd.DataFrame, chunksize: Optional[int] = None,
             df_chunk = df_chunk.copy()
 
         yield df_chunk
+
+
+def validate_alpacaeval_preference(x: float, is_allow_nan: bool = True) -> bool:
+    """Validate the preference annotation."""
+    return (1 <= x <= 2) or (is_allow_nan and np.isnan(x))
+
+
+def get_all_clients(
+    client_config_path: AnyPath,
+    model_name: str,
+    default_client_class: str,
+    get_backwards_compatible_configs: Callable,
+    backward_compatibility_kwargs: dict = {},
+    **kwargs,
+) -> list:
+    """Returns a list of different kwargs to pass to the client, each element corresponds to one possible client.
+    For more information see `client_configs/README.md`.
+    """
+
+    client_config_path = Path(client_config_path)
+    if client_config_path.is_file():
+        with open(client_config_path) as f:
+            all_client_configs = yaml.safe_load(f)
+
+        client_configs = []
+
+        if model_name in all_client_configs:
+            if "default" in all_client_configs[model_name]:
+                assert "default" in all_client_configs, "default client was asked for but not found"
+                client_configs = client_configs + all_client_configs["default"]
+                # remove "default" from the list of configs for this model
+                all_client_configs[model_name] = [
+                    config for config in all_client_configs[model_name] if config != "default"
+                ]
+
+            client_configs = client_configs + all_client_configs[model_name]
+
+        else:
+            assert (
+                "default" in all_client_configs
+            ), f"default client config is required as there are no model specific configs for {model_name}"
+            client_configs = all_client_configs["default"]
+
+    else:
+        # backward compatibility
+        logging.warning(
+            f"{client_config_path} wasn't found. We are using environment variables to construct the client configs."
+            "This is the old and non-recommended way of doing it. Please see `client_configs/README.md` for the "
+            "recommended way of specifying client configs."
+        )
+        client_configs = get_backwards_compatible_configs(**backward_compatibility_kwargs)
+
+    all_clients = []
+    for config in client_configs:
+        client_class = config.pop("client_class", default_client_class)
+        ClientClass = import_class(client_class)
+        all_clients.append(ClientClass(**config, **kwargs))
+
+    return all_clients
+
+
+def import_class(full_class_string):
+    """
+    Dynamically import a class from a string.
+
+    Parameters
+    ----------
+    full_class_string:
+        The full class string. E.g., 'openai.OpenAI' return OpenAI
+    """
+    module_name, class_name = full_class_string.rsplit(".", 1)
+
+    # Import the module
+    module = __import__(module_name, fromlist=[class_name])
+
+    # Get the class
+    cls = getattr(module, class_name)
+
+    return cls

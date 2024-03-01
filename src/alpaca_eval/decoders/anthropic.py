@@ -43,7 +43,7 @@ def anthropic_completions(
     n_examples = len(prompts)
     if n_examples == 0:
         logging.info("No samples to annotate.")
-        return []
+        return dict(completions=[], price_per_example=[], time_per_example=[], completions_all=[])
     else:
         to_log = f"Using `anthropic_completions` on {n_examples} prompts using {model_name} and num_procs={num_procs}."
         logging.info(to_log)
@@ -74,7 +74,7 @@ def anthropic_completions(
     completions = [response.completion for response in responses]
 
     # anthropic doesn't return total tokens but 1 token approx 4 chars
-    price = [len(prompt) / 4 * _get_price_per_token(model_name) for prompt in prompts]
+    price = [(len(p) + len(c)) / 4 * _get_price_per_token(model_name) for p, c in zip(prompts, completions)]
 
     avg_time = [t.duration / n_examples] * len(completions)
 
@@ -86,7 +86,7 @@ def _anthropic_completion_helper(
     sleep_time: int = 2,
     anthropic_api_keys: Optional[Sequence[str]] = (constants.ANTHROPIC_API_KEY,),
     temperature: Optional[float] = 0.7,
-    n_retries: Optional[int] = 3,
+    n_retries: Optional[int] = 10,
     **kwargs,
 ):
     prompt, max_tokens = args
@@ -101,7 +101,9 @@ def _anthropic_completion_helper(
 
     kwargs.update(dict(max_tokens_to_sample=max_tokens, temperature=temperature))
     curr_kwargs = copy.deepcopy(kwargs)
-    while True:
+
+    response = None
+    for _ in range(n_retries):
         try:
             response = client.completions.create(prompt=prompt, **curr_kwargs)
 
@@ -122,15 +124,23 @@ def _anthropic_completion_helper(
         except anthropic.APITimeoutError as e:
             logging.warning(f"API TimeoutError: {e}. Retrying request.")
 
+        except anthropic.APIError as e:
+            response = anthropic.types.Completion(completion="", model="", stop_reason="api_error")
+            break
+
+    if response is None:
+        logging.warning(f"Max retries reached. Returning empty completion.")
+        response = anthropic.types.Completion(completion="", model="", stop_reason="max_retries_exceeded")
+
     return response
 
 
 def _get_price_per_token(model):
     """Returns the price per token for a given model"""
-    # https://cdn2.assets-servd.host/anthropic-website/production/images/model_pricing_may2023.pdf
+    # https://www-files.anthropic.com/production/images/model_pricing_dec2023.pdf
     if "claude-v1" in model or "claude-2" in model:
         return (
-            11.02 / 1e6
+            8 / 1e6
         )  # that's not completely true because decoding is 32.68 but close enough given that most is context
     else:
         logging.warning(f"Unknown model {model} for computing price per token.")

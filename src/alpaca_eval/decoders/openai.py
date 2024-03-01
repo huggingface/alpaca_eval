@@ -4,9 +4,10 @@ import json
 import logging
 import math
 import multiprocessing
+import os
 import random
 import time
-from typing import Optional, Sequence, Union
+from typing import Any, Optional, Sequence, Union
 
 import numpy as np
 import openai
@@ -17,8 +18,6 @@ from openai import OpenAI
 from .. import constants, utils
 
 __all__ = ["openai_completions"]
-
-DEFAULT_OPENAI_API_BASE = openai.base_url
 
 
 def openai_completions(
@@ -31,6 +30,7 @@ def openai_completions(
     is_strip: bool = True,
     num_procs: Optional[int] = constants.OPENAI_MAX_CONCURRENCY,
     batch_size: Optional[int] = None,
+    price_per_token: Optional[float] = None,
     **decoding_kwargs,
 ) -> dict[str, list]:
     r"""Get openai completions for the given prompts. Allows additional parameters such as tokens to avoid and
@@ -58,6 +58,9 @@ def openai_completions(
 
     is_strip : bool, optional
         Whether to strip trailing and leading spaces from the prompts.
+
+    price_per_token : float, optional
+        Price per token for the model. If not provided, we will try to infer it from the model name.
 
     decoding_kwargs :
         Additional kwargs to pass to `openai.Completion` or `openai.ChatCompletion`.
@@ -110,7 +113,7 @@ def openai_completions(
     if is_strip:
         prompts = [p.strip() for p in prompts]
 
-    is_chat = decoding_kwargs.get("requires_chatml", _requires_chatml(model_name))
+    is_chat = decoding_kwargs.pop("requires_chatml", _requires_chatml(model_name))
     if is_chat:
         prompts = [_prompt_to_chatml(prompt) for prompt in prompts]
         num_procs = num_procs or 2
@@ -133,7 +136,7 @@ def openai_completions(
 
     inputs = zip(prompt_batches, max_tokens)
 
-    kwargs = dict(n=1, model=model_name, is_chat=is_chat, **decoding_kwargs)
+    kwargs = dict(model=model_name, is_chat=is_chat, **decoding_kwargs)
     kwargs_to_log = {k: v for k, v in kwargs.items() if "api_key" not in k}
     logging.info(f"Kwargs to completion: {kwargs_to_log}. num_procs={num_procs}")
 
@@ -160,7 +163,7 @@ def openai_completions(
     completions_text = [completion["text"] for completion in completions_all]
 
     price = [
-        completion["total_tokens"] * _get_price_per_token(model_name)
+        completion["total_tokens"] * _get_price_per_token(model_name, price_per_token)
         for completion_batch in completions
         for completion in completion_batch
     ]
@@ -178,35 +181,46 @@ def _openai_completion_helper(
     args: tuple[Sequence[str], int],
     is_chat: bool,
     sleep_time: int = 2,
-    openai_organization_ids: Optional[Sequence[str]] = constants.OPENAI_ORGANIZATION_IDS,
-    openai_api_keys: Optional[Sequence[str]] = constants.OPENAI_API_KEYS,
-    openai_api_base: Optional[str] = None,
     top_p: Optional[float] = 1.0,
     temperature: Optional[float] = 0.7,
+    client_config_path: utils.AnyPath = constants.OPENAI_CLIENT_CONFIG_PATH,  # see `client_configs/README.md`
+    # following is only for backward compatibility and should be avoided
+    openai_organization_ids: Optional[Sequence[str]] = constants.OPENAI_ORGANIZATION_IDS,
+    openai_api_keys: Optional[Sequence[str]] = constants.OPENAI_API_KEYS,
+    openai_api_base: Optional[str] = os.getenv("OPENAI_API_BASE") if os.getenv("OPENAI_API_BASE") else openai.base_url,
+    ############################
+    client_kwargs: Optional[dict[str, Any]] = None,
+    n_retries: Optional[int] = 10,
     **kwargs,
 ):
+    client_kwargs = client_kwargs or dict()
     prompt_batch, max_tokens = args
-    client_kwargs = dict()
+    all_clients = utils.get_all_clients(
+        client_config_path,
+        model_name=kwargs["model"],
+        get_backwards_compatible_configs=_get_backwards_compatible_configs,
+        default_client_class="openai.OpenAI",
+        backward_compatibility_kwargs=dict(
+            openai_organization_ids=openai_organization_ids,
+            openai_api_keys=openai_api_keys,
+            openai_api_base=openai_api_base,
+        ),
+        **client_kwargs,
+    )
 
-    # randomly select orgs
-    if openai_organization_ids is not None:
-        client_kwargs["organization"] = random.choice(openai_organization_ids)
-
-    openai_api_keys = openai_api_keys or constants.OPENAI_API_KEYS
-
-    if openai_api_keys is not None:
-        client_kwargs["api_key"] = random.choice(openai_api_keys)
-
-    # set api base
-    client_kwargs["base_url"] = base_url = openai_api_base if openai_api_base is not None else DEFAULT_OPENAI_API_BASE
-
-    client = OpenAI(**client_kwargs)
+    # randomly select the client
+    client_idcs = range(len(all_clients))
+    curr_client_idx = random.choice(client_idcs)
+    logging.info(f"Using OAI client number {curr_client_idx+1} out of {len(client_idcs)}.")
+    client = all_clients[curr_client_idx]
 
     # copy shared_kwargs to avoid modifying it
     kwargs.update(dict(max_tokens=max_tokens, top_p=top_p, temperature=temperature))
     curr_kwargs = copy.deepcopy(kwargs)
 
-    while True:
+    # ensure no infinite loop
+    choices = None
+    for _ in range(n_retries):
         try:
             if is_chat:
                 completion_batch = client.chat.completions.create(messages=prompt_batch[0], **curr_kwargs)
@@ -243,7 +257,7 @@ def _openai_completion_helper(
                 if kwargs["max_tokens"] == 0:
                     logging.exception("Prompt is already longer than max context length. Error:")
                     raise e
-            elif "Detected an error in the prompt. Please try again with a different prompt." in str(e):
+            elif "Please try again with a different prompt." in str(e):
                 logging.warning(
                     f"We got an obscure error from openAI. It's likely the spam filter so we are "
                     f"skipping this example."
@@ -257,18 +271,18 @@ def _openai_completion_helper(
                     logging.warning(f"Hit request rate limit; retrying...")
                 else:
                     logging.warning(f"Unknown error. \n It's likely a rate limit so we are retrying...")
-                if openai_organization_ids is not None and len(openai_organization_ids) > 1:
-                    client_kwargs["organization"] = organization = random.choice(
-                        [o for o in openai_organization_ids if o != openai.organization]
-                    )
-                    client = OpenAI(**client_kwargs)
-                    logging.info(f"Switching OAI organization.")
-                if openai_api_keys is not None and len(openai_api_keys) > 1:
-                    client_kwargs["api_key"] = random.choice([o for o in openai_api_keys if o != openai.api_key])
-                    client = OpenAI(**client_kwargs)
-                    logging.info(f"Switching OAI API key.")
+                if len(all_clients) > 1:
+                    curr_client_idx = random.choice([idx for idx in client_idcs if idx != curr_client_idx])
+                    client = all_clients[curr_client_idx]
+                    logging.info(f"Switching OAI client to client number {curr_client_idx}.")
                 logging.info(f"Sleeping {sleep_time} before retrying to call openai API...")
                 time.sleep(sleep_time)  # Annoying rate limit on requests.
+
+    if choices is None:
+        logging.warning(f"Max retries reached. Returning empty completions.")
+        # TODO: the return is a tmp hack, should be handled better
+        choices = [dict(text="", total_tokens=0)] * len(prompt_batch)
+
     return choices
 
 
@@ -341,9 +355,11 @@ def _string_to_dict(to_convert):
     return {s.split("=", 1)[0]: s.split("=", 1)[1] for s in to_convert.split(" ") if len(s) > 0}
 
 
-def _get_price_per_token(model):
+def _get_price_per_token(model, price_per_token=None):
     """Returns the price per token for a given model"""
-    if "gpt-4-1106" in model:
+    if price_per_token is not None:
+        return float(price_per_token)
+    elif "gpt-4-1106" in model:
         return (
             0.01 / 1000
         )  # that's not completely true because decoding is 0.03 but close enough given that most is context
@@ -358,3 +374,27 @@ def _get_price_per_token(model):
     else:
         logging.warning(f"Unknown model {model} for computing price per token.")
         return np.nan
+
+
+def _get_backwards_compatible_configs(
+    openai_api_keys=[], openai_organization_ids=[None], openai_api_base=None
+) -> list[dict[str, Any]]:
+    if isinstance(openai_api_keys, str) or openai_api_keys is None:
+        openai_api_keys = [openai_api_keys]
+    if isinstance(openai_organization_ids, str) or openai_organization_ids is None:
+        openai_organization_ids = [openai_organization_ids]
+
+    client_configs = []
+    for api_key in openai_api_keys:
+        for org in openai_organization_ids:
+            client_kwargs = dict(api_key=api_key)
+
+            if org is not None:
+                client_kwargs["organization"] = org
+
+            if openai_api_base is not None:
+                client_kwargs["base_url"] = openai_api_base
+
+            client_configs.append(client_kwargs)
+
+    return client_configs

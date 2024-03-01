@@ -18,11 +18,28 @@ PACKAGES_DEV = [
     "pytest",
     "pytest-mock",
     "pytest-skip-slow",
+    "pytest-env",
     "python-dotenv",
 ]
 PACKAGES_ANALYSIS = ["seaborn", "matplotlib", "jupyterlab"]
-PACKAGES_LOCAL = ["accelerate", "transformers", "bitsandbytes", "xformers", "peft", "optimum", "scipy", "einops"]
-PACKAGES_ALL_API = ["anthropic>=0.3.3", "huggingface_hub", "cohere", "replicate", "boto3>=1.28.58"]
+PACKAGES_LOCAL = [
+    "accelerate",
+    "transformers",
+    "bitsandbytes",
+    "torch",
+    "xformers",
+    "peft",
+    "optimum",
+    "einops",
+    "vllm",
+]
+PACKAGES_ALL_API = [
+    "anthropic>=0.3.3",
+    "cohere",
+    "replicate",
+    "boto3>=1.28.58",
+    "google-generativeai",
+]
 PACKAGES_ALL = PACKAGES_LOCAL + PACKAGES_ALL_API + PACKAGES_ANALYSIS + PACKAGES_DEV
 
 setuptools.setup(
@@ -35,10 +52,12 @@ setuptools.setup(
     install_requires=[
         "python-dotenv",
         "datasets",
-        "openai",
+        "openai>=1.5.0",
         "pandas",
         "tiktoken>=0.3.2",
         "fire",
+        "scipy",
+        "huggingface_hub",
     ],
     extras_require={
         "analysis": PACKAGES_ANALYSIS,
